@@ -77,6 +77,15 @@ async function ensureColumns(conn: mysql.Connection, db: string): Promise<void> 
     console.log("已为 knav_email_tokens.purpose 增加 site_reset");
   }
 
+  /* 网址直达：缓存 YOURLS 短链 */
+  const shortUrlType = await columnType(conn, db, "knav_contents", "short_url");
+  if (!shortUrlType) {
+    await conn.query(
+      "ALTER TABLE knav_contents ADD COLUMN short_url VARCHAR(500) NOT NULL DEFAULT '' COMMENT 'YOURLS 短网址缓存（仅网址直达用）' AFTER url"
+    );
+    console.log("已为 knav_contents 增加 short_url");
+  }
+
   /* 至少保证有一个站长：升级老库时把最早的管理员提升为站长 */
   const [owners] = await conn.query<any[]>(
     "SELECT id FROM knav_users WHERE role = 'owner' LIMIT 1"

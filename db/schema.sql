@@ -160,6 +160,7 @@ CREATE TABLE IF NOT EXISTS `knav_contents` (
   `title`       VARCHAR(200) NOT NULL,
   `slug`        VARCHAR(200) NOT NULL DEFAULT '',
   `url`         VARCHAR(500) NOT NULL DEFAULT '',
+  `short_url`   VARCHAR(500) NOT NULL DEFAULT ''       COMMENT 'YOURLS 短网址缓存（仅网址直达用）',
   `description` VARCHAR(1000) NOT NULL DEFAULT '',
   `content_md`  MEDIUMTEXT    NULL,
   `icon`        VARCHAR(1024) NOT NULL DEFAULT ''      COMMENT '自定义图标（导入时可能是 data:URI）',

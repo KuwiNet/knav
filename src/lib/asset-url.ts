@@ -63,6 +63,21 @@ export function resolveAssetUrl(
   return p.startsWith("/") ? `${b}${p}` : `${b}/${p}`;
 }
 
+/**
+ * 前台同源资源地址：站内相对路径保持相对，由浏览器按当前访问域名取。
+ *
+ * favicon / LOGO 这类随本次部署一起发布的资源不能用「站点地址」拼：
+ * 本地测试库里的站点地址仍指向生产域名时，浏览器会去生产域名取图标，
+ * 本地刚换的图标就永远不生效。外链地址照旧原样返回。
+ */
+export function resolveAssetHref(path: string | null | undefined): string {
+  const p = (path ?? "").trim();
+  if (!p) return "";
+  if (p.startsWith("//")) return `https:${p}`;
+  if (/^https?:\/\//i.test(p)) return p;
+  return p.startsWith("/") ? p : `/${p}`;
+}
+
 /** 批量解析：只取一次基准站点 */
 export async function resolveAssetUrls(
   paths: (string | null | undefined)[]

@@ -44,7 +44,6 @@ fail() { log "失败: $*"; exit 1; }
 BRAND_FILES=(
   public/logo.png
   public/icon.png
-  src/app/icon.png
   src/app/apple-icon.png
 )
 BRAND_BACKUP=""
@@ -190,7 +189,7 @@ if [ "$ARTIFACT" -eq 1 ]; then
 fi
 
 OTHER_CHANGES=$(git status --porcelain --untracked-files=no |
-  grep -vE '^ M (public/logo\.png|public/icon\.png|src/app/icon\.png|src/app/apple-icon\.png)$' || true)
+  grep -vE '^ M (public/logo\.png|public/icon\.png|src/app/apple-icon\.png)$' || true)
 [ -z "$OTHER_CHANGES" ] || fail "服务器工作区有未提交修改（品牌文件除外），请先处理:
 $OTHER_CHANGES"
 
@@ -198,6 +197,13 @@ backup_brand
 git checkout -- "${BRAND_FILES[@]}"
 git merge --ff-only "$TARGET"
 restore_brand
+
+# 旧版本把 favicon 放在 src/app/icon.png，会和 public/icon.png 抢同一路径导致 500；
+# 现在统一使用 public/icon.png，旧文件存在时清掉（品牌图片已由 public/icon.png 保留）。
+if [ -f "$APP_DIR/src/app/icon.png" ]; then
+  rm -f "$APP_DIR/src/app/icon.png"
+  log "已清理旧的 src/app/icon.png"
+fi
 log "当前版本: $(git log --oneline -1)"
 
 if [ -z "$CONTAINER_NAME" ]; then

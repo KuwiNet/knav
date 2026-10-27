@@ -309,8 +309,8 @@ export async function updateContent(
   const title = input.title?.trim();
   if (!title) return { ok: false, error: "标题不能为空" };
 
-  const row = await queryOne<{ type: string }>(
-    "SELECT type FROM knav_contents WHERE id = ? LIMIT 1",
+  const row = await queryOne<{ type: string; url: string }>(
+    "SELECT type, url FROM knav_contents WHERE id = ? LIMIT 1",
     [id]
   );
   if (!row) return { ok: false, error: "内容不存在" };
@@ -319,6 +319,7 @@ export async function updateContent(
     row.type === "article" ? input.contentMd ?? "" : input.description ?? "";
   const status = input.status ?? "publish";
   const when = input.date?.trim() || now();
+  const nextUrl = input.url?.trim() ?? "";
 
   await execute(
     `UPDATE knav_contents
@@ -329,7 +330,7 @@ export async function updateContent(
     [
       title,
       toSlug(title),
-      input.url?.trim() ?? "",
+      nextUrl,
       input.description ?? "",
       content,
       input.icon?.trim() ?? "",
@@ -341,6 +342,11 @@ export async function updateContent(
       id,
     ]
   );
+
+  // 网址换了，旧的短链缓存作废，下次点「直达」重新生成
+  if (row.type === "site" && nextUrl !== (row.url ?? "")) {
+    await execute("UPDATE knav_contents SET short_url = '' WHERE id = ?", [id]);
+  }
 
   if (input.categoryIds !== undefined || input.categoryId !== undefined) {
     const categoryIds =

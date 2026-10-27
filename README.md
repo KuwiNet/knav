@@ -3,6 +3,7 @@
 knav 是一个基于 Next.js 15 与 MySQL 8 的导航站 / 资源分享站点系统。网址收藏、技术文章与软件下载共用同一套分类轴和卡片样式，站内自带账号体系、投稿审核、下载管理、素材库与完整后台。
 
 - **统一展示**：同一个分类下的网址与文章混排，卡片外观完全一致，只有操作按钮不同（网址 → `直达 ↗`，文章 → `阅读 →`）
+- **网址直达**：可接 YOURLS 短网址，点击「直达」自动生成并复用短链；未配置时直连原网址，文章不受影响
 - **软件下载**：按「软件 → 平台版本 → 镜像链接」三层维护，支持多平台、多架构与多个下载入口
 - **完整账号体系**：邮箱注册验证、找回密码、站内通知、收藏，以及 Telegram / GitHub / Gitee / Google 第三方登录
 - **独立数据表结构**：使用 `knav_*` 表存储数据；可从 knav、WordPress / OneNav、Typecho、Z-BlogPHP、Emlog、Halo 1.x 及常见导航站的数据库一次性导入存量内容
@@ -107,7 +108,7 @@ knav 是一个基于 Next.js 15 与 MySQL 8 的导航站 / 资源分享站点系
 
 ### 外观
 
-- 站点 LOGO 与 favicon 可在后台配置；默认使用 `public/logo.png` 与 `src/app/icon.png`
+- 站点 LOGO 与 favicon 可在后台配置；默认使用 `public/logo.png` 与 `public/icon.png`
 - **站点壁纸**：Bing 每日壁纸 / 小鸟壁纸 / 随机风景 / 自定义图片，可调遮罩浓度
   - 小鸟壁纸支持「每天一张」或「每次刷新换一张」，11 个分类可勾选
   - 按视口长边与像素比选择合适分辨率，小屏幕不加载超大图
@@ -609,7 +610,7 @@ sudo systemctl start knav
 - 本地开发库的内容**不会**因为代码部署自动出现在生产站；需要迁移内容时用后台「数据迁移」或手动导入数据库
 - 部署不会改写 `.env`、`.deploy.env`、`public/uploads/`，也不会增删数据库里的内容。站点名称、LOGO、图标、站点地址请在后台设置
 - 空库首次部署前，可在服务器 `.env` 设置 `ADMIN_USERNAME` / `ADMIN_PASSWORD` / `ADMIN_EMAIL`，`db:migrate` 会自动创建站长；已有站长时不会重置账号或密码
-- 品牌图片允许在服务器本地替换：`public/logo.png`、`public/icon.png`、`src/app/icon.png`、`src/app/apple-icon.png`（注意不是项目根目录下的 `logo.png` / `icon.png`，根目录的文件不会被访问）。脚本会在合并前暂存你本地替换过的文件、合并后还原，自动部署不会覆盖你的替换；未替换的文件仍跟随仓库更新。想换回仓库版本时执行 `git checkout -- public/logo.png public/icon.png src/app/icon.png src/app/apple-icon.png` 再部署
+- 品牌图片允许在服务器本地替换：`public/logo.png`、`public/icon.png`、`src/app/apple-icon.png`（注意不是项目根目录下的 `logo.png` / `icon.png`，根目录的文件不会被访问）。脚本会在合并前暂存你本地替换过的文件、合并后还原，自动部署不会覆盖你的替换；未替换的文件仍跟随仓库更新。想换回仓库版本时执行 `git checkout -- public/logo.png public/icon.png src/app/apple-icon.png` 再部署
 
 前置条件：
 

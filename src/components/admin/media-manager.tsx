@@ -2,10 +2,12 @@
 
 import { useActionState, useEffect, useState } from "react";
 import { useFormStatus } from "react-dom";
+import { useRouter } from "next/navigation";
 import {
   uploadMediaAction,
   localizeMediaAction,
   deleteMediaAction,
+  scanMediaAction,
 } from "@/lib/actions/media-actions";
 import type { FormState } from "@/lib/actions/types";
 import { formatSize, type MediaItem } from "@/lib/media-config";
@@ -28,6 +30,15 @@ function LocalizeButton() {
   );
 }
 
+function ScanButton() {
+  const { pending } = useFormStatus();
+  return (
+    <button type="submit" className="btn btn-outline" disabled={pending}>
+      {pending ? "扫描中…" : "扫描 uploads"}
+    </button>
+  );
+}
+
 export default function MediaManager({
   items,
   total,
@@ -45,15 +56,27 @@ export default function MediaManager({
     localizeMediaAction,
     {}
   );
+  const [scanState, scanAction] = useActionState<FormState, FormData>(
+    scanMediaAction,
+    {}
+  );
   const [copied, setCopied] = useState("");
+  const router = useRouter();
 
-  // 保存成功后刷新页面数据
+  // 上传/下载成功后整页刷新，清掉文件选择框
   useEffect(() => {
     if (upState.success || loState.success) {
-      const t = setTimeout(() => window.location.reload(), 400);
+      const t = setTimeout(() => window.location.reload(), 600);
       return () => clearTimeout(t);
     }
   }, [upState.success, loState.success]);
+
+  // 扫描只刷新数据，保留「登记了几个」的提示
+  useEffect(() => {
+    if (!scanState.success) return;
+    const t = setTimeout(() => router.refresh(), 600);
+    return () => clearTimeout(t);
+  }, [scanState.success, router]);
 
   const copy = async (url: string) => {
     try {
@@ -99,6 +122,7 @@ export default function MediaManager({
             </div>
             <div className="hint" style={{ marginTop: 8 }}>
               上传后自动存入 /uploads/YYYY/MM/，可在内容编辑里直接引用。
+              支持 PNG / JPEG / GIF / WebP / AVIF / BMP / ICO，不接受 SVG。
             </div>
           </div>
         </form>
@@ -150,7 +174,21 @@ export default function MediaManager({
             搜索
           </button>
         </form>
+        <span className="spacer" />
+        <form action={scanAction}>
+          <ScanButton />
+        </form>
       </div>
+
+      <div className="hint" style={{ marginTop: -6 }}>
+        直接把 uploads 目录从备份恢复/拷贝进站点后，文件本身不会自动出现在素材库；
+        点「扫描 uploads」会把磁盘上已有、数据库里没登记的图片补进来。
+      </div>
+
+      {scanState.error ? <div className="alert alert-error">{scanState.error}</div> : null}
+      {scanState.success ? (
+        <div className="alert alert-success">{scanState.success}</div>
+      ) : null}
 
       {items.length === 0 ? (
         <div className="empty">

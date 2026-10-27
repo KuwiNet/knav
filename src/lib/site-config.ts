@@ -1,5 +1,5 @@
 import { getSettingMap } from "./settings";
-import { getAssetBase, resolveAssetUrl } from "./asset-url";
+import { getAssetBase, resolveAssetHref, resolveAssetUrl } from "./asset-url";
 
 /**
  * 前台站点配置。
@@ -136,7 +136,8 @@ export async function getSiteConfig(): Promise<SiteConfig> {
     icp: str(map, "icp"),
 
     logoUrl: resolveAssetUrl(str(map, "logo_url", "/logo.png"), base),
-    faviconUrl: resolveAssetUrl(str(map, "favicon_url", "/icon.png"), base),
+    // favicon 必须按当前访问域名取，不能拼成生产域名，否则本地测试改图标不生效
+    faviconUrl: resolveAssetHref(str(map, "favicon_url", "/icon.png")),
     logoSize: Number(map.logo_size) || 28,
     logoShowName: bool(map, "logo_show_name", true),
 

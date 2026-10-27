@@ -144,18 +144,17 @@ export default function SocialBindings({
             : key === "telegram"
               ? "后台缺少 Bot 用户名"
               : "后台缺少 Client ID / Secret";
+          const info = item
+            ? [item.username, item.email].filter(Boolean).join(" · ") || "已绑定"
+            : "未绑定";
 
           return (
             <div className="binding-row" key={key}>
               <div className="binding-main">
-                <div className="strong">{label}</div>
-                <div className="hint">
-                  {item
-                    ? item.username
-                      ? `已绑定：${item.username}${item.email ? ` · ${item.email}` : ""}`
-                      : `已绑定${item.email ? `：${item.email}` : ""}`
-                    : "未绑定"}
-                </div>
+                <span className="binding-name">{label}</span>
+                <span className="binding-info" title={info}>
+                  {info}
+                </span>
               </div>
 
               {item ? (
@@ -180,7 +179,9 @@ export default function SocialBindings({
                   </a>
                 )
               ) : (
-                <span className="hint">{reason}</span>
+                <span className="hint" style={{ margin: 0 }}>
+                  {reason}
+                </span>
               )}
             </div>
           );

@@ -9,7 +9,10 @@ import {
   deleteMedia,
   listMedia,
   fileNameOf,
+  imageExtFromBytes,
+  imageMimeOf,
   saveBufferToLocal,
+  scanUploadsToMedia,
   MAX_IMAGE_BYTES,
 } from "@/lib/media";
 import type { FormState } from "./types";
@@ -50,8 +53,15 @@ export async function uploadMediaAction(
   }
 
   const buf = Buffer.from(await f.arrayBuffer());
-  const mime = (f.type || "application/octet-stream").toLowerCase();
-  const ext = (f.name.split(".").pop() || "bin").toLowerCase().replace(/[^a-z0-9]/g, "") || "bin";
+  // 按文件头判断真实格式：浏览器报的 MIME 和文件名都可能被改，
+  // 伪装成 .png 的 HTML/SVG 放到同源静态目录会变成存储型 XSS。
+  const ext = imageExtFromBytes(buf);
+  if (!ext) {
+    return {
+      error: "只支持 PNG / JPEG / GIF / WebP / AVIF / BMP / ICO 图片（不支持 SVG）",
+    };
+  }
+  const mime = imageMimeOf(ext);
 
   const saved = await saveBufferToLocal(buf, ext, f.name);
   if (!saved.ok || !saved.relPath) return { error: saved.error ?? "保存失败" };
@@ -70,6 +80,37 @@ export async function uploadMediaAction(
   await logAction("media.upload", f.name, { path: saved.relPath });
   revalidatePath("/admin/media");
   return { success: `上传成功：${saved.relPath}` };
+}
+
+/** 扫描 public/uploads，登记磁盘上已有但数据库没记录的图片 */
+export async function scanMediaAction(
+  _prev: FormState,
+  _fd: FormData
+): Promise<FormState> {
+  await requireAdmin();
+  const r = await scanUploadsToMedia();
+  if (!r.ok) return { error: r.error ?? "扫描失败" };
+
+  await logAction("media.scan", "public/uploads", {
+    scanned: r.scanned,
+    added: r.added,
+    failed: r.failed,
+  });
+  revalidatePath("/admin/media");
+
+  if (r.added > 0) {
+    const skipped = r.failed > 0 ? `，跳过 ${r.failed} 个非图片文件` : "";
+    return {
+      success: `扫描完成：新登记 ${r.added} 个素材（共检查 ${r.scanned} 个文件${skipped}）`,
+    };
+  }
+  if (r.scanned === 0) return { success: "public/uploads 里还没有图片文件" };
+  return {
+    success:
+      r.failed > 0
+        ? `扫描完成：${r.scanned - r.failed} 个图片都已登记，跳过 ${r.failed} 个非图片文件`
+        : `扫描完成：${r.scanned} 个图片都已登记`,
+  };
 }
 
 /** 把外链图片下载到本地并入库 */

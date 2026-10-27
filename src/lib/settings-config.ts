@@ -49,6 +49,7 @@ export const SETTING_GROUPS: SettingGroupDef[] = [
   { key: "basic", label: "基础信息" },
   { key: "logo", label: "LOGO 与图标" },
   { key: "appearance", label: "外观与卡片" },
+  { key: "shortlink", label: "短网址（YOURLS）" },
   { key: "code", label: "代码块" },
   { key: "seo", label: "SEO" },
   { key: "footer", label: "页脚与版权" },
@@ -139,6 +140,33 @@ export const SETTINGS_FIELDS: SettingField[] = [
     default: "",
   },
 
+  /* ---------------------------------------------------------- 短网址 */
+  {
+    key: "yourls_enabled",
+    label: "启用直达短网址",
+    type: "switch",
+    group: "shortlink",
+    default: "1",
+    hint: "配置好 API 地址与签名后，网址的「直达」会先走 YOURLS 短链；文章不受影响。关掉后直连原网址。",
+  },
+  {
+    key: "yourls_api_url",
+    label: "YOURLS API 地址",
+    type: "text",
+    group: "shortlink",
+    default: "",
+    placeholder: "https://your-domain.com/yourls-api.php",
+    hint: "填 YOURLS 根目录下 yourls-api.php 的完整地址",
+  },
+  {
+    key: "yourls_signature",
+    label: "Secret Signature Token",
+    type: "password",
+    group: "shortlink",
+    default: "",
+    hint: "YOURLS 后台「工具 → 签名 Token」里复制；只用于服务端生成短链，不会出现在前台页面",
+  },
+
   /* ---------------------------------------------------------- LOGO */
   {
     key: "logo_url",
@@ -176,6 +204,15 @@ export const SETTINGS_FIELDS: SettingField[] = [
     type: "switch",
     group: "logo",
     default: "1",
+  },
+  {
+    key: "iconfont_css",
+    label: "图标字体 CSS",
+    type: "text",
+    group: "logo",
+    default: "",
+    placeholder: "https://cdn.jsdelivr.net/npm/iconfont/.../iconfont.css",
+    hint: "iconfont 图标库的样式表地址。保存后分类图标里会多出一排图标字体宫格，直接点选即可",
   },
 
   /* ---------------------------------------------------------- 外观 */
@@ -285,15 +322,6 @@ export const SETTINGS_FIELDS: SettingField[] = [
       { value: "auto", label: "优先自定义图标，没有则用首图/首字母" },
       { value: "letter", label: "始终用标题首字母" },
     ],
-  },
-  {
-    key: "iconfont_css",
-    label: "图标字体 CSS",
-    type: "text",
-    group: "appearance",
-    default: "",
-    placeholder: "https://cdn.jsdelivr.net/npm/iconfont/.../iconfont.css",
-    hint: "iconfont 图标库的样式表地址。保存后分类图标里会多出一排图标字体宫格，直接点选即可",
   },
 
   /* ---------------------------------------------------------- 代码块 */

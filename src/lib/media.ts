@@ -50,6 +50,24 @@ const EXT_BY_MIME: Record<string, string> = {
   "text/plain": "txt",
 };
 
+const MIME_BY_IMAGE_EXT: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  avif: "image/avif",
+  bmp: "image/bmp",
+  ico: "image/x-icon",
+};
+
+/** 扫描素材库时认的图片后缀（刻意不含 svg，见 imageExtFromBytes 的说明） */
+const SCANNABLE_IMAGE_EXT = new Set(Object.keys(MIME_BY_IMAGE_EXT));
+
+export function imageMimeOf(ext: string): string {
+  return MIME_BY_IMAGE_EXT[ext.toLowerCase()] ?? "";
+}
+
 /** 是不是站外远程地址 */
 export function isRemoteUrl(url: string): boolean {
   return /^https?:\/\//i.test(url.trim());
@@ -78,6 +96,12 @@ export function imageExtFromBytes(buf: Buffer): string {
   if (head.slice(0, 4) === "RIFF" && buf.subarray(8, 12).toString("ascii") === "WEBP") {
     return "webp";
   }
+  if (buf.subarray(4, 8).toString("ascii") === "ftyp") {
+    const brand = buf.subarray(8, 12).toString("ascii");
+    if (brand === "avif" || brand === "avis") return "avif";
+  }
+  if (buf[0] === 0x42 && buf[1] === 0x4d) return "bmp";
+  if (buf[0] === 0 && buf[1] === 0 && buf[2] === 1 && buf[3] === 0) return "ico";
   return "";
 }
 
@@ -187,13 +211,18 @@ export async function saveBufferToLocal(
     return { ok: false, error: "文件超过体积上限" };
   }
   const safeExt = ext.replace(/[^a-z0-9]/gi, "") || "bin";
-  const mime = IMAGE_EXT_BY_MIME[`image/${safeExt}`] ?? "";
+  const mime = imageMimeOf(safeExt);
   const dim = mime ? readImageSize(buf, mime) : { width: 0, height: 0 };
   try {
     const { relPath, size } = await saveBuffer(buf, safeExt, filenameHint);
     return { ok: true, relPath, size, width: dim.width, height: dim.height };
   } catch (e: any) {
-    return { ok: false, error: `写入失败：${e?.message ?? e}` };
+    const code = e?.code as string | undefined;
+    const reason =
+      code === "EACCES" || code === "EPERM"
+        ? "运行用户对 public/uploads 没有写权限，请把该目录交给运行用户并设为 755"
+        : e?.message ?? String(e);
+    return { ok: false, error: `写入失败：${reason}` };
   }
 }
 
@@ -258,10 +287,23 @@ export async function downloadToLocal(
     return { ok: false, error: `体积超过限制（${Math.round(buf.length / 1024 / 1024)}MB）` };
   }
 
+  const urlExt = extFromUrl(remoteUrl);
+  if (mime === "image/svg+xml" || urlExt === "svg") {
+    return { ok: false, error: "不支持 SVG 图片（可能内嵌脚本，存在安全风险）" };
+  }
+
+  // 图片必须按文件头认出来：服务端 MIME 和 URL 后缀都可能骗人。
+  const sniffed = imageExtFromBytes(buf);
+  const claimsImage = mime.startsWith("image/") || Boolean(MIME_BY_IMAGE_EXT[urlExt]);
+  if (claimsImage && !sniffed) {
+    return { ok: false, error: "图片内容无法识别，已拒绝保存" };
+  }
+
   const ext =
+    sniffed ||
     IMAGE_EXT_BY_MIME[mime] ||
     (mime ? EXT_BY_MIME[mime] : "") ||
-    extFromUrl(remoteUrl) ||
+    urlExt ||
     "png";
 
   try {
@@ -442,6 +484,129 @@ export async function listMedia(
       createdAt: r.created_at,
     })),
   };
+}
+
+export interface ScanUploadsResult {
+  ok: boolean;
+  /** 检查过的图片文件数 */
+  scanned: number;
+  /** 新登记进素材库的数量 */
+  added: number;
+  /** 后缀像图片、但内容不是图片而跳过的数量 */
+  failed: number;
+  error?: string;
+}
+
+/**
+ * 扫描 public/uploads，把磁盘上已有、但数据库里没登记的图片补进素材库。
+ *
+ * 手工拷贝/恢复 uploads 后素材库为空，就是缺了这一步：素材库读的是
+ * knav_media，不是目录列表。文件属主是 root 不会影响读取，只要运行用户有 r 权限。
+ */
+export async function scanUploadsToMedia(): Promise<ScanUploadsResult> {
+  const root = path.join(publicDir(), UPLOAD_ROOT);
+  try {
+    const st = await fs.promises.stat(root);
+    if (!st.isDirectory()) {
+      return { ok: false, scanned: 0, added: 0, failed: 0, error: "public/uploads 不是目录" };
+    }
+  } catch {
+    return { ok: true, scanned: 0, added: 0, failed: 0 };
+  }
+
+  let known: Set<string>;
+  try {
+    const rows = await query<{ path: string }>(
+      "SELECT path FROM knav_media WHERE path LIKE ?",
+      [`/${UPLOAD_ROOT}/%`]
+    );
+    known = new Set(rows.map((r) => r.path));
+  } catch (e: any) {
+    return {
+      ok: false,
+      scanned: 0,
+      added: 0,
+      failed: 0,
+      error: `读取素材记录失败：${e?.message ?? e}`,
+    };
+  }
+
+  const files: string[] = [];
+  const collect = async (dir: string, depth: number): Promise<void> => {
+    if (depth > 4) return;
+    const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.name.startsWith(".")) continue;
+      const abs = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await collect(abs, depth + 1);
+      } else if (
+        entry.isFile() &&
+        SCANNABLE_IMAGE_EXT.has(path.extname(entry.name).slice(1).toLowerCase())
+      ) {
+        files.push(abs);
+      }
+    }
+  };
+
+  try {
+    await collect(root, 0);
+  } catch (e: any) {
+    const code = e?.code as string | undefined;
+    const reason =
+      code === "EACCES" || code === "EPERM"
+        ? "运行用户对 public/uploads 没有读权限，请把目录设为 755 并确认属主"
+        : e?.message ?? String(e);
+    return { ok: false, scanned: 0, added: 0, failed: 0, error: `扫描失败：${reason}` };
+  }
+
+  let added = 0;
+  let failed = 0;
+  for (const abs of files) {
+    const rel = `/${path.relative(publicDir(), abs).split(path.sep).join("/")}`;
+    if (known.has(rel)) continue;
+
+    try {
+      const st = await fs.promises.stat(abs);
+      if (!st.isFile() || st.size === 0) continue;
+      const ext = path.extname(abs).slice(1).toLowerCase();
+
+      // 只读文件头，避免把超大文件整个读进内存；不信任后缀
+      const fh = await fs.promises.open(abs, "r");
+      const head = Buffer.alloc(32);
+      const { bytesRead } = await fh.read(head, 0, head.length, 0);
+      await fh.close();
+      if (!imageExtFromBytes(head.subarray(0, bytesRead))) {
+        failed++;
+        continue;
+      }
+
+      let width = 0;
+      let height = 0;
+      if (st.size <= MAX_IMAGE_BYTES) {
+        const buf = await fs.promises.readFile(abs);
+        const dim = readImageSize(buf, imageMimeOf(ext));
+        width = dim.width;
+        height = dim.height;
+      }
+
+      await recordMedia({
+        filename: path.basename(abs),
+        path: rel,
+        url: rel,
+        mime: imageMimeOf(ext),
+        size: st.size,
+        width,
+        height,
+      });
+      known.add(rel);
+      added++;
+    } catch {
+      failed++;
+    }
+  }
+
+  return { ok: true, scanned: files.length, added, failed };
 }
 
 /** 删除素材记录（可选同时删文件） */

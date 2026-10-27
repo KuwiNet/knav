@@ -1,4 +1,4 @@
-import { listMedia } from "@/lib/media";
+import { listMedia, scanUploadsToMedia } from "@/lib/media";
 import MediaManager from "@/components/admin/media-manager";
 
 export const dynamic = "force-dynamic";
@@ -10,7 +10,15 @@ export default async function AdminMediaPage({
 }) {
   const sp = await searchParams;
   const keyword = (sp.q ?? "").trim();
-  const { items, total } = await listMedia({ keyword, limit: 60 });
+  let { items, total } = await listMedia({ keyword, limit: 60 });
+
+  // 素材库是空的时候先扫一遍 uploads：从备份恢复图片后不必再手动点按钮
+  if (!keyword && total === 0) {
+    const scanned = await scanUploadsToMedia();
+    if (scanned.added > 0) {
+      ({ items, total } = await listMedia({ limit: 60 }));
+    }
+  }
 
   return (
     <div>

@@ -58,7 +58,7 @@ export default async function SiteDetailPage({
 
         {item.url ? (
           <a
-            href={item.url}
+            href={`/go/${item.id}`}
             target="_blank"
             rel="noopener noreferrer nofollow"
             className="btn btn-lg mt-2"

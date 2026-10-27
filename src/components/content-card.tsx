@@ -116,7 +116,7 @@ export function ContentCard({
           ) : null}
           {isSite && item.url ? (
             <a
-              href={item.url}
+              href={`/go/${item.id}`}
               target="_blank"
               rel="noopener noreferrer nofollow"
               className="card-action"

@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useActionState, useEffect, useState } from "react";
+import { useActionState, useEffect, useState } from "react";
 import { useFormStatus } from "react-dom";
 import {
   createUserAction,
@@ -41,6 +41,29 @@ const IDENTITY_PROVIDERS: { key: string; label: string; short: string }[] = [
   { key: "gitee", label: "Gitee", short: "Gitee" },
   { key: "google", label: "Google", short: "Google" },
 ];
+
+const STATUS_MAP: Record<string, { label: string; cls: string }> = {
+  active: { label: "正常", cls: "badge badge-green" },
+  pending: { label: "待验证", cls: "badge badge-amber" },
+  banned: { label: "已封禁", cls: "badge badge-red" },
+};
+
+const ROLE_MAP: Record<string, { label: string; cls: string }> = {
+  owner: { label: "站长", cls: "badge badge-accent" },
+  admin: { label: "管理员", cls: "badge badge-green" },
+  editor: { label: "编辑", cls: "badge badge-amber" },
+  user: { label: "用户", cls: "badge" },
+};
+
+function RoleBadge({ role }: { role: string }) {
+  const item = ROLE_MAP[role] ?? ROLE_MAP.user;
+  return <span className={item.cls}>{item.label}</span>;
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const item = STATUS_MAP[status] ?? STATUS_MAP.active;
+  return <span className={item.cls}>{item.label}</span>;
+}
 
 function SaveButton({ label }: { label: string }) {
   const { pending } = useFormStatus();
@@ -218,7 +241,7 @@ function UserForm({
 }
 
 /**
- * 重置密码表单（展开在表格的独立一行里，不挤在按钮行）。
+ * 重置密码表单（显示在操作弹窗里）。
  *
  * 两条路径：
  *   - 不填密码：只发「设置新密码」链接，当前密码不动，用户自己决定改不改；
@@ -238,12 +261,9 @@ function randomPassword(len = 14): string {
 
 function ResetPasswordForm({
   user,
-  onSaved,
   onClose,
 }: {
   user: AdminUserRow;
-  /** 重置成功后回调（用来收起面板） */
-  onSaved?: () => void;
   onClose?: () => void;
 }) {
   const [state, action] = useActionState<FormState, FormData>(
@@ -252,11 +272,6 @@ function ResetPasswordForm({
   );
   const [password, setPassword] = useState("");
   const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    if (state.success) onSaved?.();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.success]);
 
   const copy = async () => {
     try {
@@ -379,20 +394,16 @@ function BindingsPanel({
       <div className="binding-list">
         {IDENTITY_PROVIDERS.map(({ key, label }) => {
           const item = map.get(key);
+          const info = item
+            ? [item.username, item.email].filter(Boolean).join(" · ") || "已绑定"
+            : "未绑定";
           return (
             <div className="binding-row" key={key}>
               <div className="binding-main">
-                <div className="strong">{label}</div>
-                <div className="hint">
-                  {item
-                    ? [
-                        item.username ? `账号：${item.username}` : "",
-                        item.email ? `邮箱：${item.email}` : "",
-                      ]
-                        .filter(Boolean)
-                        .join(" · ") || "已绑定"
-                    : "未绑定"}
-                </div>
+                <span className="binding-name">{label}</span>
+                <span className="binding-info" title={info}>
+                  {info}
+                </span>
               </div>
               {item && !readOnly ? (
                 <form
@@ -422,6 +433,8 @@ function BindingsPanel({
   );
 }
 
+type ActionView = "menu" | "edit" | "reset" | "notify" | "bindings";
+
 export default function UserManager({
   users,
   status,
@@ -444,23 +457,34 @@ export default function UserManager({
 }) {
   const viewerIsOwner = viewerRole === "owner";
   const [creating, setCreating] = useState(false);
-  const [editing, setEditing] = useState<number | null>(null);
-  // 展开的面板：重置密码 / 通知 / 第三方绑定，都单独占表格的一行
-  const [panel, setPanel] = useState<{
-    kind: "reset" | "notify" | "bindings";
-    id: number;
-  } | null>(null);
-  /** 打开某个用户行下方的面板，同时收掉正在展开的编辑表单 */
-  const openPanel = (kind: "reset" | "notify" | "bindings", id: number) => {
-    setEditing(null);
-    setPanel((p) => (p && p.kind === kind && p.id === id ? null : { kind, id }));
+  const [openedId, setOpenedId] = useState<number | null>(null);
+  const [view, setView] = useState<ActionView>("menu");
+
+  const openedUser = openedId ? users.find((u) => u.id === openedId) ?? null : null;
+  const openUser = (id: number) => {
+    setOpenedId(id);
+    setView("menu");
+  };
+  const closeModal = () => {
+    setOpenedId(null);
+    setView("menu");
   };
 
-  const STATUS_MAP: Record<string, { label: string; cls: string }> = {
-    active: { label: "正常", cls: "badge badge-green" },
-    pending: { label: "待验证", cls: "badge badge-amber" },
-    banned: { label: "已封禁", cls: "badge badge-red" },
-  };
+  useEffect(() => {
+    if (!openedUser) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeModal();
+    };
+    document.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prev;
+    };
+    // closeModal 是稳定的状态更新，不需要进依赖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openedUser]);
 
   const tabs = [
     { key: "", label: "全部" },
@@ -468,6 +492,13 @@ export default function UserManager({
     { key: "pending", label: "待验证" },
     { key: "banned", label: "已封禁" },
   ];
+
+  const openedAct = openedUser
+    ? activity[openedUser.id] ?? { notifications: 0, unread: 0, favorites: 0 }
+    : { notifications: 0, unread: 0, favorites: 0 };
+  const openedIsOwner = openedUser?.role === "owner";
+  const openedCanManage = openedUser ? !openedIsOwner || openedUser.id === viewerId : false;
+  const openedIdentities = openedUser ? identities[openedUser.id] ?? [] : [];
 
   return (
     <div className="stack" style={{ gap: 16 }}>
@@ -487,7 +518,6 @@ export default function UserManager({
           className="btn"
           onClick={() => {
             setCreating((v) => !v);
-            setEditing(null);
           }}
         >
           {creating ? "收起" : "新增用户"}
@@ -512,8 +542,6 @@ export default function UserManager({
         <UserForm key="create" mode="create" onSaved={() => setCreating(false)} />
       ) : null}
 
-      {/* 编辑表单不在这里：一律就地展开在被编辑用户那一行的正下方 */}
-
       <div className="table-wrap">
         <table className="table">
           <thead>
@@ -524,271 +552,302 @@ export default function UserManager({
               <th style={{ width: 110 }}>第三方</th>
               <th style={{ width: 76 }}>通知</th>
               <th style={{ width: 60 }}>收藏</th>
+              <th style={{ width: 90 }}>角色</th>
               <th style={{ width: 90 }}>状态</th>
               <th style={{ width: 150 }}>注册时间</th>
               <th style={{ width: 150 }}>最近登录</th>
-              <th style={{ width: 330 }}>操作</th>
+              <th style={{ width: 80 }}>操作</th>
             </tr>
           </thead>
           <tbody>
             {users.map((u) => {
-              const st = STATUS_MAP[u.status] ?? STATUS_MAP.active;
               const act = activity[u.id] ?? {
                 notifications: 0,
                 unread: 0,
                 favorites: 0,
               };
-              // 站长行只有本人能编辑/重置密码；封禁、删除对谁都不显示
-              const isOwnerRow = u.role === "owner";
-              const canManage = !isOwnerRow || u.id === viewerId;
               const uIdentities = identities[u.id] ?? [];
               return (
-                <Fragment key={u.id}>
-                  <tr>
-                    <td className="text-muted">{u.id}</td>
-                    <td>
-                      <div className="row" style={{ gap: 9 }}>
-                        <Avatar
-                          src={u.avatar}
-                          name={u.nickname || u.username}
-                          size={30}
-                        />
-                        <div style={{ minWidth: 0 }}>
-                          <div className="strong">{u.username}</div>
-                          {u.nickname && u.nickname !== u.username ? (
-                            <div className="text-muted text-sm">{u.nickname}</div>
-                          ) : null}
-                        </div>
-                      </div>
-                    </td>
-                    <td className="text-muted text-sm" style={{ overflowWrap: "anywhere" }}>
-                      {u.email}
-                    </td>
-                    <td>
-                      {uIdentities.length > 0 ? (
-                        <div className="row" style={{ gap: 4, flexWrap: "wrap" }}>
-                          {uIdentities.map((i) => (
-                            <span key={i.provider} className="badge badge-accent">
-                              {IDENTITY_PROVIDERS.find((p) => p.key === i.provider)
-                                ?.short ?? i.provider}
-                            </span>
-                          ))}
-                        </div>
-                      ) : (
-                        <span className="text-muted text-sm">-</span>
-                      )}
-                    </td>
-                    <td className="text-sm nowrap">
-                      {act.notifications}
-                      {act.unread ? (
-                        <div className="text-muted" style={{ fontSize: 12 }}>
-                          未读 {act.unread}
-                        </div>
-                      ) : null}
-                    </td>
-                    <td className="text-sm">{act.favorites}</td>
-                    <td>
-                      <span className={st.cls}>{st.label}</span>
-                      <div className="text-muted text-sm" style={{ marginTop: 2 }}>
-                        {u.role === "owner" ? (
-                          <strong style={{ color: "var(--accent)" }}>站长</strong>
-                        ) : u.role === "admin" ? (
-                          "管理员"
-                        ) : u.role === "editor" ? (
-                          "编辑"
-                        ) : (
-                          "用户"
-                        )}
-                      </div>
-                    </td>
-                    <td className="text-muted text-sm nowrap">
-                      {String(u.createdAt).slice(0, 16)}
-                    </td>
-                    <td className="text-muted text-sm nowrap">
-                      {u.lastLoginAt ? String(u.lastLoginAt).slice(0, 16) : "-"}
-                    </td>
-                    <td>
-                      {/* 操作顺序：编辑 → 重置密码 → 通知 → 转移站长 → 封禁 → 删除 */}
-                      <div className="row" style={{ gap: 5, flexWrap: "wrap" }}>
-                        {canManage ? (
-                          <>
-                            <button
-                              type="button"
-                              className="btn btn-sm btn-outline"
-                              onClick={() => {
-                                setEditing(editing === u.id ? null : u.id);
-                                setCreating(false);
-                              }}
-                            >
-                              {editing === u.id ? "取消" : "编辑"}
-                            </button>
-
-                            <button
-                              type="button"
-                              className={`btn btn-sm ${panel?.kind === "reset" && panel.id === u.id ? "" : "btn-outline"}`}
-                              onClick={() => openPanel("reset", u.id)}
-                            >
-                              重置密码
-                            </button>
-                          </>
+                <tr key={u.id}>
+                  <td className="text-muted">{u.id}</td>
+                  <td>
+                    <div className="row" style={{ gap: 9 }}>
+                      <Avatar
+                        src={u.avatar}
+                        name={u.nickname || u.username}
+                        size={30}
+                      />
+                      <div style={{ minWidth: 0 }}>
+                        <div className="strong">{u.username}</div>
+                        {u.nickname && u.nickname !== u.username ? (
+                          <div className="text-muted text-sm">{u.nickname}</div>
                         ) : null}
-
-                        <button
-                          type="button"
-                          className={`btn btn-sm ${panel?.kind === "notify" && panel.id === u.id ? "" : "btn-outline"}`}
-                          onClick={() => openPanel("notify", u.id)}
-                        >
-                          通知
-                        </button>
-
-                        <button
-                          type="button"
-                          className={`btn btn-sm ${panel?.kind === "bindings" && panel.id === u.id ? "" : "btn-outline"}`}
-                          onClick={() => openPanel("bindings", u.id)}
-                        >
-                          绑定
-                        </button>
-
-                        {viewerIsOwner && u.role === "admin" ? (
-                          <form action={transferOwnerAction}>
-                            <input type="hidden" name="id" value={u.id} />
-                            <button
-                              type="submit"
-                              className="btn btn-outline btn-sm"
-                              style={{ color: "var(--accent)", borderColor: "var(--accent)" }}
-                              onClick={(e) => {
-                                if (
-                                  !confirm(
-                                    `确定把管理员「${u.username}」提升为站长？\n你会自动降为管理员，站长身份随即转移。`
-                                  )
-                                ) {
-                                  e.preventDefault();
-                                }
-                              }}
-                            >
-                              转移站长
-                            </button>
-                          </form>
-                        ) : null}
-
-                        {isOwnerRow ? (
-                          u.id === viewerId ? null : (
-                            <span className="text-muted text-sm" style={{ alignSelf: "center" }}>
-                              站长账号仅本人可管理
-                            </span>
-                          )
-                        ) : (
-                          <>
-                            {u.status === "banned" ? (
-                              <form action={setUserStatusAction}>
-                                <input type="hidden" name="id" value={u.id} />
-                                <input type="hidden" name="status" value="active" />
-                                <button type="submit" className="btn btn-sm">
-                                  解封账号
-                                </button>
-                              </form>
-                            ) : (
-                              <form action={setUserStatusAction}>
-                                <input type="hidden" name="id" value={u.id} />
-                                <input type="hidden" name="status" value="banned" />
-                                <button
-                                  type="submit"
-                                  className="btn btn-outline btn-sm"
-                                  style={{ color: "var(--red)", borderColor: "var(--red)" }}
-                                  onClick={(e) => {
-                                    if (!confirm(`确定封禁用户「${u.username}」？`)) {
-                                      e.preventDefault();
-                                    }
-                                  }}
-                                >
-                                  封禁账号
-                                </button>
-                              </form>
-                            )}
-
-                            {u.status === "pending" ? (
-                              <form action={setUserStatusAction}>
-                                <input type="hidden" name="id" value={u.id} />
-                                <input type="hidden" name="status" value="active" />
-                                <button type="submit" className="btn btn-sm">
-                                  通过验证
-                                </button>
-                              </form>
-                            ) : null}
-
-                            <form action={deleteUserAction}>
-                              <input type="hidden" name="id" value={u.id} />
-                              <button
-                                type="submit"
-                                className="btn btn-outline btn-sm"
-                                style={{ color: "var(--red)", borderColor: "var(--red)" }}
-                                onClick={(e) => {
-                                  if (
-                                    !confirm(
-                                      `确定删除用户「${u.username}」？其投稿、收藏、通知会一并删除，操作不可撤销。`
-                                    )
-                                  ) {
-                                    e.preventDefault();
-                                  }
-                                }}
-                              >
-                                删除
-                              </button>
-                            </form>
-                          </>
-                        )}
                       </div>
-                    </td>
-                  </tr>
-
-                  {/* 编辑表单就地展开在该用户行的正下方 */}
-                  {editing === u.id ? (
-                    <tr>
-                      <td colSpan={10} style={{ background: "var(--surface-2)", padding: 10 }}>
-                        <UserForm
-                          /* key 跟着用户走：输入框是 defaultValue（不受控），
-                             不换 key 的话，从用户 A 切到用户 B，表单还是 A 的内容 */
-                          key={`edit-${editing}`}
-                          mode="edit"
-                          user={u}
-                          onSaved={() => setEditing(null)}
-                        />
-                      </td>
-                    </tr>
-                  ) : null}
-
-                  {panel?.id === u.id ? (
-                    <tr>
-                      <td colSpan={10} style={{ background: "var(--surface-2)" }}>
-                        {panel.kind === "reset" ? (
-                          <ResetPasswordForm
-                            user={u}
-                            onSaved={() => setPanel(null)}
-                            onClose={() => setPanel(null)}
-                          />
-                        ) : panel.kind === "notify" ? (
-                          <UserNotify
-                            userId={u.id}
-                            username={u.username}
-                            onClose={() => setPanel(null)}
-                          />
-                        ) : (
-                          <BindingsPanel
-                            user={u}
-                            identities={uIdentities}
-                            readOnly={!canManage}
-                            onClose={() => setPanel(null)}
-                          />
-                        )}
-                      </td>
-                    </tr>
-                  ) : null}
-                </Fragment>
+                    </div>
+                  </td>
+                  <td className="text-muted text-sm" style={{ overflowWrap: "anywhere" }}>
+                    {u.email}
+                  </td>
+                  <td>
+                    {uIdentities.length > 0 ? (
+                      <div className="row" style={{ gap: 4, flexWrap: "wrap" }}>
+                        {uIdentities.map((i) => (
+                          <span key={i.provider} className="badge badge-accent">
+                            {IDENTITY_PROVIDERS.find((p) => p.key === i.provider)
+                              ?.short ?? i.provider}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-muted text-sm">-</span>
+                    )}
+                  </td>
+                  <td className="text-sm nowrap">
+                    {act.notifications}
+                    {act.unread ? (
+                      <div className="text-muted" style={{ fontSize: 12 }}>
+                        未读 {act.unread}
+                      </div>
+                    ) : null}
+                  </td>
+                  <td className="text-sm">{act.favorites}</td>
+                  <td>
+                    <RoleBadge role={u.role} />
+                  </td>
+                  <td>
+                    <StatusBadge status={u.status} />
+                  </td>
+                  <td className="text-muted text-sm nowrap">
+                    {String(u.createdAt).slice(0, 16)}
+                  </td>
+                  <td className="text-muted text-sm nowrap">
+                    {u.lastLoginAt ? String(u.lastLoginAt).slice(0, 16) : "-"}
+                  </td>
+                  <td>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-outline"
+                      aria-haspopup="dialog"
+                      aria-expanded={openedId === u.id}
+                      onClick={() => openUser(u.id)}
+                    >
+                      操作
+                    </button>
+                  </td>
+                </tr>
               );
             })}
           </tbody>
         </table>
       </div>
+
+      {openedUser ? (
+        <div
+          className="user-modal-mask"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) closeModal();
+          }}
+        >
+          <div
+            className="user-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`管理用户 ${openedUser.username}`}
+          >
+            <div className="user-modal-head">
+              <Avatar
+                src={openedUser.avatar}
+                name={openedUser.nickname || openedUser.username}
+                size={40}
+              />
+              <div className="user-modal-identity">
+                <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+                  <strong>{openedUser.username}</strong>
+                  <RoleBadge role={openedUser.role} />
+                  <StatusBadge status={openedUser.status} />
+                </div>
+                <div className="hint user-modal-sub" title={openedUser.email}>
+                  {openedUser.email}
+                  {openedUser.nickname && openedUser.nickname !== openedUser.username
+                    ? ` · ${openedUser.nickname}`
+                    : ""}
+                  {` · 通知 ${openedAct.notifications} / 收藏 ${openedAct.favorites}`}
+                </div>
+              </div>
+              <button
+                type="button"
+                className="user-modal-close"
+                aria-label="关闭"
+                onClick={closeModal}
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="user-modal-body">
+              {view !== "menu" ? (
+                <button
+                  type="button"
+                  className="btn btn-sm btn-ghost user-modal-back"
+                  onClick={() => setView("menu")}
+                >
+                  ← 返回操作
+                </button>
+              ) : null}
+
+              {view === "menu" ? (
+                <div className="user-action-grid">
+                  {openedCanManage ? (
+                    <>
+                      <button
+                        type="button"
+                        className="btn btn-outline"
+                        onClick={() => setView("edit")}
+                      >
+                        编辑用户
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-outline"
+                        onClick={() => setView("reset")}
+                      >
+                        重置密码
+                      </button>
+                    </>
+                  ) : null}
+
+                  <button
+                    type="button"
+                    className="btn btn-outline"
+                    onClick={() => setView("notify")}
+                  >
+                    通知用户
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-outline"
+                    onClick={() => setView("bindings")}
+                  >
+                    绑定账号
+                  </button>
+
+                  {viewerIsOwner && openedUser.role === "admin" ? (
+                    <form
+                      action={transferOwnerAction}
+                      onSubmit={(e) => {
+                        if (
+                          !confirm(
+                            `确定把管理员「${openedUser.username}」提升为站长？\n你会自动降为管理员，站长身份随即转移。`
+                          )
+                        ) {
+                          e.preventDefault();
+                        }
+                      }}
+                    >
+                      <input type="hidden" name="id" value={openedUser.id} />
+                      <button
+                        type="submit"
+                        className="btn btn-outline"
+                        style={{ color: "var(--accent)", borderColor: "var(--accent)" }}
+                      >
+                        转移站长
+                      </button>
+                    </form>
+                  ) : null}
+
+                  {openedIsOwner ? null : openedUser.status === "banned" ? (
+                    <form action={setUserStatusAction}>
+                      <input type="hidden" name="id" value={openedUser.id} />
+                      <input type="hidden" name="status" value="active" />
+                      <button type="submit" className="btn btn-outline">
+                        解封账号
+                      </button>
+                    </form>
+                  ) : (
+                    <form
+                      action={setUserStatusAction}
+                      onSubmit={(e) => {
+                        if (!confirm(`确定封禁用户「${openedUser.username}」？`)) {
+                          e.preventDefault();
+                        }
+                      }}
+                    >
+                      <input type="hidden" name="id" value={openedUser.id} />
+                      <input type="hidden" name="status" value="banned" />
+                      <button
+                        type="submit"
+                        className="btn btn-outline"
+                        style={{ color: "var(--red)", borderColor: "var(--red)" }}
+                      >
+                        封禁账号
+                      </button>
+                    </form>
+                  )}
+
+                  {!openedIsOwner && openedUser.status === "pending" ? (
+                    <form action={setUserStatusAction}>
+                      <input type="hidden" name="id" value={openedUser.id} />
+                      <input type="hidden" name="status" value="active" />
+                      <button type="submit" className="btn btn-outline">
+                        通过验证
+                      </button>
+                    </form>
+                  ) : null}
+
+                  {openedIsOwner ? null : (
+                    <form
+                      action={deleteUserAction}
+                      onSubmit={(e) => {
+                        if (
+                          !confirm(
+                            `确定删除用户「${openedUser.username}」？其投稿、收藏、通知会一并删除，操作不可撤销。`
+                          )
+                        ) {
+                          e.preventDefault();
+                        }
+                      }}
+                    >
+                      <input type="hidden" name="id" value={openedUser.id} />
+                      <button
+                        type="submit"
+                        className="btn btn-outline"
+                        style={{ color: "var(--red)", borderColor: "var(--red)" }}
+                      >
+                        删除账号
+                      </button>
+                    </form>
+                  )}
+                </div>
+              ) : view === "edit" ? (
+                <UserForm
+                  key={`edit-${openedUser.id}`}
+                  mode="edit"
+                  user={openedUser}
+                  onSaved={closeModal}
+                />
+              ) : view === "reset" ? (
+                <ResetPasswordForm
+                  user={openedUser}
+                  onClose={() => setView("menu")}
+                />
+              ) : view === "notify" ? (
+                <UserNotify
+                  userId={openedUser.id}
+                  username={openedUser.username}
+                  onClose={() => setView("menu")}
+                />
+              ) : (
+                <BindingsPanel
+                  user={openedUser}
+                  identities={openedIdentities}
+                  readOnly={!openedCanManage}
+                  onClose={() => setView("menu")}
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

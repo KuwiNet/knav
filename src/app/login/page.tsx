@@ -18,8 +18,7 @@ export default async function LoginPage({
   ]);
   if (user) redirect("/dashboard");
 
-  const showSocial =
-    cfg.loginTelegram || cfg.loginGithub || cfg.loginGitee || cfg.loginGoogle;
+  const showSocial = cfg.loginGithub || cfg.loginGitee || cfg.loginGoogle;
 
   return (
     <div className="container">
@@ -37,7 +36,6 @@ export default async function LoginPage({
 
         {showSocial ? (
           <SocialLogin
-            telegramBotName={cfg.loginTelegram ? cfg.telegramBotName : ""}
             githubEnabled={cfg.loginGithub}
             giteeEnabled={cfg.loginGitee}
             googleEnabled={cfg.loginGoogle}
