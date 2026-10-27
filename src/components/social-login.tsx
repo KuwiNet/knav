@@ -27,7 +27,23 @@ for (const [key, label] of Object.entries(OAUTH_PROVIDERS)) {
   ERR_TEXT[`${key}_login_failed`] = `${label} 登录失败，账号可能已被封禁`;
 }
 ERR_TEXT.gitee_token_failed =
-  "Gitee 令牌交换失败，请核对 Client Secret 与回调地址是否和 Gitee 应用设置一致";
+  "Gitee 令牌交换失败，请重试；若仍失败，请核对 Gitee 应用设置里的 Client Secret 与回调地址";
+
+/** 把厂商错误码翻译成用户能照做的处理动作 */
+function friendlyDetail(raw?: string): string {
+  const d = (raw ?? "").trim();
+  if (!d) return "";
+  if (/invalid_grant/i.test(d)) {
+    return "授权码已失效或已被使用。请回到登录页重新点击登录，不要刷新当前回调地址。";
+  }
+  if (/invalid_client/i.test(d)) {
+    return "Client ID 或 Client Secret 不正确。请到应用后台重新复制（或重置）Secret，保存后再试。";
+  }
+  if (/redirect_uri/i.test(d)) {
+    return "回调地址与应用后台登记的不一致。请核对后台「OAuth 回调地址」并逐字粘贴。";
+  }
+  return d;
+}
 
 interface TelegramUser {
   id: number;
@@ -136,7 +152,9 @@ export default function SocialLogin({
       {errMsg ? (
         <div className="alert alert-error">
           <div>{errMsg}</div>
-          {detail ? <div className="social-error-detail">{detail}</div> : null}
+          {friendlyDetail(detail) ? (
+            <div className="social-error-detail">{friendlyDetail(detail)}</div>
+          ) : null}
         </div>
       ) : null}
 
