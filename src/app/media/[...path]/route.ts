@@ -20,7 +20,7 @@ const MIME: Record<string, string> = {
   avif: "image/avif",
   bmp: "image/bmp",
   ico: "image/x-icon",
-  // 历史数据里有 SVG 图标；上传入口本身不接受 SVG
+  // SVG 图标允许上传（入库前已做脚本检查），这里再用 CSP sandbox 兜底
   svg: "image/svg+xml",
   pdf: "application/pdf",
   zip: "application/zip",
@@ -58,7 +58,7 @@ export async function GET(
       "Cache-Control": "public, max-age=31536000, immutable",
       "X-Content-Type-Options": "nosniff",
     };
-    // 历史 SVG 图标直接打开时禁止执行脚本
+    // SVG 直接打开时禁止执行脚本、禁止加载外部资源
     if (ext === "svg") {
       headers["Content-Security-Policy"] =
         "default-src 'none'; style-src 'unsafe-inline'; sandbox";

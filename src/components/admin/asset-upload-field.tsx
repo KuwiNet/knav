@@ -203,7 +203,7 @@ export default function AssetUploadField({
       <input
         ref={fileRef}
         type="file"
-        accept="image/png,image/jpeg,image/gif,image/webp,image/avif,image/bmp,image/x-icon"
+        accept="image/png,image/jpeg,image/gif,image/webp,image/avif,image/bmp,image/x-icon,image/svg+xml,.svg"
         hidden
         onChange={onFile}
       />

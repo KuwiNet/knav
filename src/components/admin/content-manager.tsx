@@ -446,7 +446,7 @@ function ContentForm({
           value={icon}
           onChange={setIcon}
           placeholder="图片地址，或直接上传"
-          hint="建议方形图标；远程图片保存后会自动下载到本地"
+          hint="建议方形图标；支持 PNG / JPG / SVG 等，远程图片会自动下载到本地"
           letterSource={title}
         />
         {type === "article" ? (

@@ -10,6 +10,7 @@ import {
   listMedia,
   fileNameOf,
   imageExtFromBytes,
+  svgExtFromBytes,
   imageMimeOf,
   saveBufferToLocal,
   scanUploadsToMedia,
@@ -63,13 +64,15 @@ async function saveUploadedImage(
   }
 
   const buf = Buffer.from(await f.arrayBuffer());
-  // 按文件头判断真实格式：浏览器报的 MIME 和文件名都可能被改，
+  // 按内容判断真实格式：浏览器报的 MIME 和文件名都可能被改，
   // 伪装成 .png 的 HTML/SVG 放到同源静态目录会变成存储型 XSS。
-  const ext = imageExtFromBytes(buf);
+  // SVG 只收纯图形，脚本、事件属性和外链在 svgExtFromBytes 里拒绝。
+  const ext = imageExtFromBytes(buf) || svgExtFromBytes(buf);
   if (!ext) {
     return {
       ok: false,
-      error: "只支持 PNG / JPEG / GIF / WebP / AVIF / BMP / ICO 图片（不支持 SVG）",
+      error:
+        "只支持 PNG / JPEG / GIF / WebP / AVIF / BMP / ICO 图片；SVG 仅支持不含脚本、事件属性和外链的纯图形文件",
     };
   }
   const mime = imageMimeOf(ext);

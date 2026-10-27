@@ -59,10 +59,20 @@ const MIME_BY_IMAGE_EXT: Record<string, string> = {
   avif: "image/avif",
   bmp: "image/bmp",
   ico: "image/x-icon",
+  svg: "image/svg+xml",
 };
 
-/** 扫描素材库时认的图片后缀（刻意不含 svg，见 imageExtFromBytes 的说明） */
-const SCANNABLE_IMAGE_EXT = new Set(Object.keys(MIME_BY_IMAGE_EXT));
+/** 扫描素材库时认的图片后缀；SVG 要读全文做安全检查，不放进按文件头扫描的流程 */
+const SCANNABLE_IMAGE_EXT = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "avif",
+  "bmp",
+  "ico",
+]);
 
 export function imageMimeOf(ext: string): string {
   return MIME_BY_IMAGE_EXT[ext.toLowerCase()] ?? "";
@@ -84,8 +94,8 @@ export function isLocalUrl(url: string): boolean {
 /**
  * 从文件头判断真实图片格式，不信任文件名和后浏览器报的 MIME。
  *
- * 有意不收 SVG：SVG 能内嵌脚本，用户提交的 SVG 以同源图片地址打开就是一次存储型 XSS。
- * 用户上传头像走这里。
+ * 只认位图，不认 SVG：用户上传的头像走这里，SVG 需要走 svgExtFromBytes
+ * 做脚本/事件/外链检查。
  */
 export function imageExtFromBytes(buf: Buffer): string {
   if (buf.length < 12) return "";
@@ -103,6 +113,44 @@ export function imageExtFromBytes(buf: Buffer): string {
   if (buf[0] === 0x42 && buf[1] === 0x4d) return "bmp";
   if (buf[0] === 0 && buf[1] === 0 && buf[2] === 1 && buf[3] === 0) return "ico";
   return "";
+}
+
+/**
+ * 识别可安全展示的 SVG。
+ *
+ * SVG 与 HTML 共用解析器，脚本、事件处理器、foreignObject 在直接打开
+ * 同源地址时都可能执行。这里只放行以 <svg> 为根、不含这些构造的文件；
+ * /media 路由还会加 CSP sandbox 兜底。
+ */
+export function svgExtFromBytes(buf: Buffer): string {
+  if (buf.length === 0) return "";
+  // 含 NUL 的是 UTF-16 或二进制，按非 SVG 处理
+  if (buf.includes(0)) return "";
+
+  const text = buf.toString("utf8").replace(/^\uFEFF/, "");
+  const root = text
+    .trimStart()
+    .replace(/^<\?xml[\s\S]*?\?>\s*/i, "")
+    .replace(/^(?:<!--[\s\S]*?-->\s*)*/i, "")
+    .replace(/^<!DOCTYPE[^>]*>\s*/i, "")
+    .trimStart();
+  if (!/^<svg[\s/>]/i.test(root)) return "";
+
+  if (/<script[\s/>]/i.test(text) || /<\/script\s*>/i.test(text)) return "";
+  if (/<foreignObject[\s/>]/i.test(text)) return "";
+  if (/<(iframe|embed|object|audio|video|link|meta|base)[\s/>]/i.test(text)) {
+    return "";
+  }
+  if (/\son[a-z]+\s*=/i.test(text)) return "";
+  if (/javascript\s*:/i.test(text)) return "";
+  if (/<!ENTITY/i.test(text)) return "";
+  if (/(?:xlink:)?href\s*=\s*["']?\s*(?:(?:https?:)?\/\/|javascript:)/i.test(text)) {
+    return "";
+  }
+  if (/url\s*\(\s*["']?\s*(?:(?:https?:)?\/\/|javascript:)/i.test(text)) {
+    return "";
+  }
+  return "svg";
 }
 
 /* ---------------------------------------------------------------- 落盘 */
@@ -277,7 +325,15 @@ export async function downloadToLocal(
   }
 
   const mime = (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
-  if (mime && !mime.startsWith("image/") && !mime.startsWith("application/")) {
+  const urlExt = extFromUrl(remoteUrl);
+  const looksSvg = mime === "image/svg+xml" || urlExt === "svg";
+  // URL 后缀是 .svg 时放宽 MIME 限制：不少站点把 SVG 当 text/plain 发
+  if (
+    mime &&
+    !mime.startsWith("image/") &&
+    !mime.startsWith("application/") &&
+    !looksSvg
+  ) {
     return { ok: false, error: `不支持的类型：${mime}` };
   }
 
@@ -287,20 +343,25 @@ export async function downloadToLocal(
     return { ok: false, error: `体积超过限制（${Math.round(buf.length / 1024 / 1024)}MB）` };
   }
 
-  const urlExt = extFromUrl(remoteUrl);
-  if (mime === "image/svg+xml" || urlExt === "svg") {
-    return { ok: false, error: "不支持 SVG 图片（可能内嵌脚本，存在安全风险）" };
-  }
-
-  // 图片必须按文件头认出来：服务端 MIME 和 URL 后缀都可能骗人。
+  // 图片必须按内容认出来：服务端 MIME 和 URL 后缀都可能骗人。
+  // SVG 只收纯图形，脚本、事件属性和外链在 svgExtFromBytes 里拒绝。
   const sniffed = imageExtFromBytes(buf);
-  const claimsImage = mime.startsWith("image/") || Boolean(MIME_BY_IMAGE_EXT[urlExt]);
-  if (claimsImage && !sniffed) {
+  const svg = sniffed ? "" : svgExtFromBytes(buf);
+  const claimsImage =
+    mime.startsWith("image/") || Boolean(MIME_BY_IMAGE_EXT[urlExt]) || looksSvg;
+  if (looksSvg && !sniffed && !svg) {
+    return {
+      ok: false,
+      error: "SVG 图片格式不正确，或包含脚本、事件属性、外链，已拒绝保存",
+    };
+  }
+  if (claimsImage && !sniffed && !svg) {
     return { ok: false, error: "图片内容无法识别，已拒绝保存" };
   }
 
   const ext =
     sniffed ||
+    svg ||
     IMAGE_EXT_BY_MIME[mime] ||
     (mime ? EXT_BY_MIME[mime] : "") ||
     urlExt ||
@@ -314,7 +375,7 @@ export async function downloadToLocal(
       url: relPath,
       relPath,
       bytes: size,
-      mime: mime || "application/octet-stream",
+      mime: imageMimeOf(ext) || mime || "application/octet-stream",
       width: size2.width,
       height: size2.height,
       sourceUrl: remoteUrl,

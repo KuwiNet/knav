@@ -122,7 +122,7 @@ export default function MediaManager({
             </div>
             <div className="hint" style={{ marginTop: 8 }}>
               上传后自动存入 /uploads/YYYY/MM/，可在内容编辑里直接引用。
-              支持 PNG / JPEG / GIF / WebP / AVIF / BMP / ICO，不接受 SVG。
+              支持 PNG / JPEG / GIF / WebP / AVIF / BMP / ICO / SVG；SVG 会拒绝脚本、事件属性和外链。
             </div>
           </div>
         </form>
