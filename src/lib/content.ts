@@ -1,5 +1,5 @@
 import { query, queryOne } from "./db";
-import { resolveAssetUrl, getAssetBase } from "./asset-url";
+import { resolveAssetHref } from "./asset-url";
 import { excerptFromMarkdown, excerptFromContent, firstImageFromContent } from "./markdown";
 
 /**
@@ -189,10 +189,9 @@ export async function getContentItems(
   if (rows.length === 0) return [];
 
   const contentIds = rows.map((r) => Number(r.id));
-  const [tagMap, linkMap, base] = await Promise.all([
+  const [tagMap, linkMap] = await Promise.all([
     loadTagsOf(contentIds),
     loadSpareLinksOf(contentIds),
-    getAssetBase(),
   ]);
 
   return rows.map((r) => {
@@ -206,7 +205,9 @@ export async function getContentItems(
       title: r.title ?? "",
       url: r.url ?? "",
       description: r.description ?? "",
-      image: resolveAssetUrl(thumbRaw, base),
+      // 前台展示统一按当前访问域名取图：生产「站点地址」可能是别的域名/端口，
+      // 用它拼绝对地址会让刚本地化的 /uploads 图标 404（后台预览是相对路径，所以看着正常）
+      image: resolveAssetHref(thumbRaw),
       categoryId: Number(r.category_id) || 0,
       categoryName: r.category_name ?? "",
       categorySlug: r.category_slug ?? "",
@@ -218,8 +219,8 @@ export async function getContentItems(
       contentMd: t === "article" ? r.content_md ?? "" : undefined,
       downloads: undefined,
       spareLinks: linkMap.get(Number(r.id)),
-      icon: r.icon ? resolveAssetUrl(r.icon, base) : "",
-      cover: r.cover ? resolveAssetUrl(r.cover, base) : "",
+      icon: resolveAssetHref(r.icon),
+      cover: resolveAssetHref(r.cover),
       sticky: Number(r.sticky) || 0,
       order: Number(r.sort_order) || 0,
       path: pathOf(t, Number(r.id)),

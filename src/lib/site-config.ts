@@ -115,7 +115,7 @@ export function parseVerificationMeta(raw: string): Record<string, string> {
 export async function getSiteConfig(): Promise<SiteConfig> {
   const map = await getSettingMap();
   const adPos = str(map, "ad_position", "top");
-  // LOGO / favicon / 分享图按「站点地址」补全
+  // 分享图必须给爬虫绝对地址；LOGO / favicon 随当前访问域名取，避免站点地址与实际访问不一致时裂图
   const base = await getAssetBase();
 
   return {
@@ -135,7 +135,7 @@ export async function getSiteConfig(): Promise<SiteConfig> {
     siteKeywords: str(map, "site_keywords"),
     icp: str(map, "icp"),
 
-    logoUrl: resolveAssetUrl(str(map, "logo_url", "/logo.png"), base),
+    logoUrl: resolveAssetHref(str(map, "logo_url", "/logo.png")),
     // favicon 必须按当前访问域名取，不能拼成生产域名，否则本地测试改图标不生效
     faviconUrl: resolveAssetHref(str(map, "favicon_url", "/icon.png")),
     logoSize: Number(map.logo_size) || 28,
