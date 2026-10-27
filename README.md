@@ -573,7 +573,8 @@ sudo systemctl start knav
 
 - 在后台新增网址、文章、软件、修改设置，生产库会立即生效，不需要部署
 - 本地开发库的内容**不会**因为代码部署自动出现在生产站；需要迁移内容时用后台「数据迁移」或手动导入数据库
-- 部署不会改写 `.env`、`.deploy.env`、`public/uploads/`，也不会增删数据库里的内容。站点名称、LOGO、图标、站点地址请在后台设置；不要直接替换仓库里的 `public/logo.png` / `public/icon.png`，服务器工作区有未提交修改时脚本会拒绝更新
+- 部署不会改写 `.env`、`.deploy.env`、`public/uploads/`，也不会增删数据库里的内容。站点名称、LOGO、图标、站点地址请在后台设置
+- 品牌图片允许在服务器本地替换：`public/logo.png`、`public/icon.png`、`src/app/icon.png`、`src/app/apple-icon.png`（注意不是项目根目录下的 `logo.png` / `icon.png`，根目录的文件不会被访问）。脚本会在合并前暂存你本地替换过的文件、合并后还原，自动部署不会覆盖你的替换；未替换的文件仍跟随仓库更新。想换回仓库版本时执行 `git checkout -- public/logo.png public/icon.png src/app/icon.png src/app/apple-icon.png` 再部署
 
 前置条件：
 

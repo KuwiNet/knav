@@ -36,6 +36,15 @@ NEXT_DIST_DIR="${NEXT_DIST_DIR:-.next-build}"
 log() { printf '[%s] %s\n' "$(date '+%F %T')" "$*"; }
 fail() { log "失败: $*"; exit 1; }
 
+# 服务器本地替换过的品牌文件在合并前暂存、合并后还原；未替换的文件仍跟随仓库更新。
+BRAND_FILES=(
+  public/logo.png
+  public/icon.png
+  src/app/icon.png
+  src/app/apple-icon.png
+)
+BRAND_BACKUP=""
+
 restore_tsconfig() {
   if [ "${BUILD_STARTED:-0}" = "1" ] && ! git -C "$APP_DIR" diff --quiet -- tsconfig.json 2>/dev/null; then
     log "恢复 Next 对 tsconfig.json 的自动改写"
@@ -43,8 +52,49 @@ restore_tsconfig() {
   fi
 }
 
+restore_brand() {
+  local f key
+  if [ -z "$BRAND_BACKUP" ] || [ ! -d "$BRAND_BACKUP" ]; then
+    return 0
+  fi
+  for f in "${BRAND_FILES[@]}"; do
+    key="${f//\//__}"
+    if [ -f "$BRAND_BACKUP/$key" ]; then
+      cp -p "$BRAND_BACKUP/$key" "$APP_DIR/$f"
+    fi
+  done
+  rm -rf "$BRAND_BACKUP"
+  BRAND_BACKUP=""
+}
+
+backup_brand() {
+  local f key any=0
+  for f in "${BRAND_FILES[@]}"; do
+    [ -f "$APP_DIR/$f" ] || fail "缺少品牌文件 $APP_DIR/$f"
+  done
+  for f in "${BRAND_FILES[@]}"; do
+    if git -C "$APP_DIR" diff --quiet -- "$f"; then
+      continue
+    fi
+    if [ -z "$BRAND_BACKUP" ]; then
+      BRAND_BACKUP=$(mktemp -d "${TMPDIR:-/tmp}/knav-brand.XXXXXX")
+    fi
+    key="${f//\//__}"
+    cp -p "$APP_DIR/$f" "$BRAND_BACKUP/$key"
+    any=1
+  done
+  if [ "$any" -eq 1 ]; then
+    log "暂存服务器替换的品牌文件（部署后还原）"
+  fi
+}
+
+cleanup() {
+  restore_tsconfig
+  restore_brand
+}
+
 trap 'log "部署中断，当前提交 $(git rev-parse --short HEAD 2>/dev/null || echo unknown)"' ERR
-trap restore_tsconfig EXIT
+trap cleanup EXIT
 
 [ -f "$APP_DIR/.env" ] || fail "缺少 $APP_DIR/.env"
 [ "$NEXT_DIST_DIR" != ".next" ] || fail "NEXT_DIST_DIR 不能设为 .next"
@@ -124,8 +174,15 @@ if [ "$IF_CHANGED" -eq 1 ] && [ "$CURRENT" = "$TARGET" ] && [ "$DEPLOYED" = "$TA
   exit 0
 fi
 
-[ -z "$(git status --porcelain --untracked-files=no)" ] || fail "服务器工作区有未提交修改，请先处理"
+OTHER_CHANGES=$(git status --porcelain --untracked-files=no |
+  grep -vE '^ M (public/logo\.png|public/icon\.png|src/app/icon\.png|src/app/apple-icon\.png)$' || true)
+[ -z "$OTHER_CHANGES" ] || fail "服务器工作区有未提交修改（品牌文件除外），请先处理:
+$OTHER_CHANGES"
+
+backup_brand
+git checkout -- "${BRAND_FILES[@]}"
 git merge --ff-only "$TARGET"
+restore_brand
 log "当前版本: $(git log --oneline -1)"
 
 rm -rf "$APP_DIR/$NEXT_DIST_DIR"
