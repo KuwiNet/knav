@@ -26,6 +26,8 @@ for (const [key, label] of Object.entries(OAUTH_PROVIDERS)) {
   ERR_TEXT[`${key}_profile_failed`] = `获取 ${label} 用户信息失败`;
   ERR_TEXT[`${key}_login_failed`] = `${label} 登录失败，账号可能已被封禁`;
 }
+ERR_TEXT.gitee_token_failed =
+  "Gitee 令牌交换失败，请核对 Client Secret 与回调地址是否和 Gitee 应用设置一致";
 
 interface TelegramUser {
   id: number;
@@ -47,6 +49,7 @@ export default function SocialLogin({
   telegramEnabled,
   telegramBotName,
   error,
+  detail,
 }: {
   githubEnabled: boolean;
   giteeEnabled?: boolean;
@@ -54,6 +57,7 @@ export default function SocialLogin({
   telegramEnabled?: boolean;
   telegramBotName?: string;
   error?: string;
+  detail?: string;
 }) {
   const hasOAuth = githubEnabled || giteeEnabled || googleEnabled;
   const showTelegram = Boolean(telegramEnabled && telegramBotName);
@@ -129,7 +133,12 @@ export default function SocialLogin({
         <span>其他方式登录</span>
       </div>
 
-      {errMsg ? <div className="alert alert-error">{errMsg}</div> : null}
+      {errMsg ? (
+        <div className="alert alert-error">
+          <div>{errMsg}</div>
+          {detail ? <div className="social-error-detail">{detail}</div> : null}
+        </div>
+      ) : null}
 
       {hasOAuth ? (
         <div className="social-btns">

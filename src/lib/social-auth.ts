@@ -200,11 +200,13 @@ export async function exchangeGiteeCode(
       access_token?: string;
       message?: string;
       error?: string;
+      error_description?: string;
     };
     if (!data.access_token) {
+      const detail = [data.error, data.error_description].filter(Boolean).join("：");
       return {
         ok: false,
-        error: data.message || data.error || `获取令牌失败（${res.status}）`,
+        error: data.message || detail || `获取令牌失败（${res.status}）`,
       };
     }
     return { ok: true, token: data.access_token };
@@ -762,10 +764,18 @@ export async function createSocialAccount(
 
 /* ---------------------------------------------------------------- 配置读取 */
 
+/**
+ * 凭据里常见的隐形字符（复制密钥时带上的空格、换行、零宽字符）
+ * 会让授权页正常、换 token 却报 invalid_client，读取时统一清掉。
+ */
+function cleanCredential(value: string): string {
+  return value.replace(/[\s\u200B-\u200D\uFEFF]+/g, "");
+}
+
 export async function getTelegramConfig(): Promise<{ botToken: string; botName: string }> {
   return {
-    botToken: await getSetting("telegram_bot_token"),
-    botName: await getSetting("telegram_bot_name"),
+    botToken: cleanCredential(await getSetting("telegram_bot_token")),
+    botName: cleanCredential(await getSetting("telegram_bot_name")).replace(/^@+/, ""),
   };
 }
 
@@ -774,8 +784,8 @@ export async function getGithubConfig(): Promise<{
   clientSecret: string;
 }> {
   return {
-    clientId: await getSetting("github_client_id"),
-    clientSecret: await getSetting("github_client_secret"),
+    clientId: cleanCredential(await getSetting("github_client_id")),
+    clientSecret: cleanCredential(await getSetting("github_client_secret")),
   };
 }
 
@@ -784,8 +794,8 @@ export async function getGiteeConfig(): Promise<{
   clientSecret: string;
 }> {
   return {
-    clientId: await getSetting("gitee_client_id"),
-    clientSecret: await getSetting("gitee_client_secret"),
+    clientId: cleanCredential(await getSetting("gitee_client_id")),
+    clientSecret: cleanCredential(await getSetting("gitee_client_secret")),
   };
 }
 
@@ -794,8 +804,8 @@ export async function getGoogleConfig(): Promise<{
   clientSecret: string;
 }> {
   return {
-    clientId: await getSetting("google_client_id"),
-    clientSecret: await getSetting("google_client_secret"),
+    clientId: cleanCredential(await getSetting("google_client_id")),
+    clientSecret: cleanCredential(await getSetting("google_client_secret")),
   };
 }
 

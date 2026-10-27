@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ err?: string }>;
+  searchParams: Promise<{ err?: string; detail?: string }>;
 }) {
   const [user, cfg, sp] = await Promise.all([
     getCurrentUser(),
@@ -46,6 +46,7 @@ export default async function LoginPage({
             telegramEnabled={cfg.loginTelegram}
             telegramBotName={cfg.telegramBotName}
             error={sp.err}
+            detail={sp.detail}
           />
         ) : null}
       </div>

@@ -112,6 +112,11 @@ function appUrl(base: string, path: string): URL {
   return new URL(`${u.origin}${prefix}${path.startsWith("/") ? path : `/${path}`}`);
 }
 
+/** 厂商错误说明用于排查，截断并去掉换行后再放进跳转地址 */
+function shortDetail(value: string | undefined): string {
+  return (value ?? "").replace(/[\r\n\t]+/g, " ").trim().slice(0, 160);
+}
+
 /** 跳来源授权页（同时写入 state Cookie 防 CSRF） */
 export async function startOAuth(
   req: Request,
@@ -189,12 +194,18 @@ export async function completeOAuth(
 
   const base = await siteBase(req);
   const done = (path: string) => NextResponse.redirect(appUrl(base, path));
-  const fail = (reason: string) =>
-    done(
+  const fail = (reason: string, detail = "") => {
+    const extra = shortDetail(detail);
+    return done(
       intent === "bind"
-        ? `/dashboard/profile?social_error=${encodeURIComponent(reason)}`
-        : `/login?err=${encodeURIComponent(reason)}`
+        ? `/dashboard/profile?social_error=${encodeURIComponent(
+            extra ? `${reason}：${extra}` : reason
+          )}`
+        : `/login?err=${encodeURIComponent(reason)}${
+            extra ? `&detail=${encodeURIComponent(extra)}` : ""
+          }`
     );
+  };
 
   if (denied) return fail(`${provider}_denied`);
   if (!code) return fail(`${provider}_no_code`);
@@ -213,10 +224,16 @@ export async function completeOAuth(
     clientSecret,
     await redirectUri(req, provider)
   );
-  if (!token.ok) return fail(`${provider}_token_failed`);
+  if (!token.ok) {
+    console.error(`[oauth:${provider}] token exchange failed: ${token.error}`);
+    return fail(`${provider}_token_failed`, token.error);
+  }
 
   const prof = await spec.fetchProfile(token.token);
-  if (!prof.ok) return fail(`${provider}_profile_failed`);
+  if (!prof.ok) {
+    console.error(`[oauth:${provider}] profile fetch failed: ${prof.error}`);
+    return fail(`${provider}_profile_failed`, prof.error);
+  }
 
   /* ------------------------------------------------------------ 绑定当前账号 */
   if (intent === "bind") {
