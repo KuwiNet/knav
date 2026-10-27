@@ -641,7 +641,8 @@ export async function updateContentAction(
     contentMd: String(fd.get("contentMd") ?? ""),
     categoryIds: readCategoryIds(fd),
     tags: String(fd.get("tags") ?? ""),
-    cover: String(fd.get("cover") ?? ""),
+    // 网址 / 应用表单没有封面字段：没提交就保持原值，别把已有封面清空
+    cover: fd.has("cover") ? String(fd.get("cover")) : undefined,
     icon: String(fd.get("icon") ?? ""),
     order: Number(fd.get("order") ?? 0),
     sticky: readSwitch(fd, "sticky") ? 1 : 0,

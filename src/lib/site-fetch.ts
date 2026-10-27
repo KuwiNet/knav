@@ -28,6 +28,70 @@ export interface SiteMeta {
 const FETCH_TIMEOUT = 10000;
 const MAX_HTML = 800 * 1024;
 
+/**
+ * 伪装成浏览器打开页面时的请求头。
+ * 有些站点只按 UA / Sec-Fetch 判断，补齐这些能减少误伤；
+ * Cloudflare 的人机验证（挑战页）无法用请求头绕过，只能给出可操作的提示。
+ */
+const BROWSER_HEADERS: Record<string, string> = {
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+  Accept:
+    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+  "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+  "Cache-Control": "no-cache",
+  Pragma: "no-cache",
+  "Upgrade-Insecure-Requests": "1",
+  "Sec-Fetch-Dest": "document",
+  "Sec-Fetch-Mode": "navigate",
+  "Sec-Fetch-Site": "none",
+  "Sec-Fetch-User": "?1",
+  "sec-ch-ua":
+    '"Chromium";v="141", "Not?A_Brand";v="24", "Google Chrome";v="141"',
+  "sec-ch-ua-mobile": "?0",
+  "sec-ch-ua-platform": '"Windows"',
+};
+
+type FetchedPage = { status: number; finalUrl: string; html: string };
+
+async function requestPage(url: string, signal: AbortSignal): Promise<FetchedPage> {
+  const res = await fetch(url, {
+    signal,
+    redirect: "follow",
+    headers: BROWSER_HEADERS,
+  });
+  if (!res.ok) {
+    await res.body?.cancel().catch(() => {});
+    return { status: res.status, finalUrl: res.url || url, html: "" };
+  }
+  const buf = await res.text();
+  return {
+    status: res.status,
+    finalUrl: res.url || url,
+    html: buf.slice(0, MAX_HTML),
+  };
+}
+
+/** 裸域和 www 有时是两套防护策略，403 时换一个再试 */
+function alternateHost(raw: string): string | null {
+  try {
+    const u = new URL(raw);
+    u.hostname = u.hostname.startsWith("www.")
+      ? u.hostname.slice(4)
+      : `www.${u.hostname}`;
+    return u.toString();
+  } catch {
+    return null;
+  }
+}
+
+function isChallengePage(html: string): boolean {
+  return (
+    /<title>\s*Just a moment/i.test(html) ||
+    /cf-chl|challenge-platform|Attention Required!?\s*\|\s*Cloudflare/i.test(html)
+  );
+}
+
 /** 补全协议头 */
 export function normalizeUrl(raw: string): string {
   let u = (raw || "").trim();
@@ -93,24 +157,20 @@ export async function fetchSiteMeta(
 
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT);
-  let html = "";
-  let finalUrl = url;
+  let page: FetchedPage;
   try {
-    const res = await fetch(url, {
-      signal: ctrl.signal,
-      redirect: "follow",
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-        Accept: "text/html,application/xhtml+xml",
-      },
-    });
-    if (!res.ok) {
-      return { ok: false, error: `对方站点返回 ${res.status}` };
+    page = await requestPage(url, ctrl.signal);
+    if ((page.status === 403 || page.status === 503) && !ctrl.signal.aborted) {
+      const alt = alternateHost(url);
+      if (alt) {
+        try {
+          const retry = await requestPage(alt, ctrl.signal);
+          if (retry.status < 400 && !isChallengePage(retry.html)) page = retry;
+        } catch {
+          /* 换域名也失败时，按第一次的结果提示 */
+        }
+      }
     }
-    finalUrl = res.url || url;
-    const buf = await res.text();
-    html = buf.slice(0, MAX_HTML);
   } catch (e) {
     const msg = (e as Error)?.name === "AbortError" ? "请求超时" : (e as Error)?.message;
     return { ok: false, error: `无法访问该站点：${msg}` };
@@ -118,7 +178,24 @@ export async function fetchSiteMeta(
     clearTimeout(timer);
   }
 
-  const base = finalUrl;
+  if (
+    page.status === 403 ||
+    page.status === 503 ||
+    isChallengePage(page.html)
+  ) {
+    return {
+      ok: false,
+      error:
+        `对方站点返回 HTTP ${page.status}，常见原因是 Cloudflare 等访问验证拦截了服务器。` +
+        "请在浏览器打开该站点手动填写标题和简介，图标可在下方「自定义图标」里直接上传。",
+    };
+  }
+  if (page.status < 200 || page.status >= 300) {
+    return { ok: false, error: `对方站点返回 ${page.status}` };
+  }
+
+  const html = page.html;
+  const base = page.finalUrl;
 
   // 标题：og:title 优先，其次 <title>
   let title = "";
@@ -180,7 +257,7 @@ export async function fetchSiteMeta(
       description,
       icon,
       cover,
-      finalUrl,
+      finalUrl: page.finalUrl,
     },
   };
 }

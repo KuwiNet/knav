@@ -309,8 +309,8 @@ export async function updateContent(
   const title = input.title?.trim();
   if (!title) return { ok: false, error: "标题不能为空" };
 
-  const row = await queryOne<{ type: string; url: string }>(
-    "SELECT type, url FROM knav_contents WHERE id = ? LIMIT 1",
+  const row = await queryOne<{ type: string; url: string; cover: string }>(
+    "SELECT type, url, cover FROM knav_contents WHERE id = ? LIMIT 1",
     [id]
   );
   if (!row) return { ok: false, error: "内容不存在" };
@@ -320,6 +320,9 @@ export async function updateContent(
   const status = input.status ?? "publish";
   const when = input.date?.trim() || now();
   const nextUrl = input.url?.trim() ?? "";
+  // cover 不传（如网址 / 应用表单）表示不动原值
+  const nextCover =
+    input.cover === undefined ? row.cover ?? "" : input.cover.trim();
 
   await execute(
     `UPDATE knav_contents
@@ -334,7 +337,7 @@ export async function updateContent(
       input.description ?? "",
       content,
       input.icon?.trim() ?? "",
-      input.cover?.trim() ?? "",
+      nextCover,
       input.sticky ?? 0,
       input.order ?? 0,
       status,

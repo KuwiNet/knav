@@ -19,6 +19,7 @@ import type { AdminContentDetail, PlatformVersion } from "@/lib/admin-types";
 import { PLATFORM_PRESETS, MIRROR_PRESETS, ARCH_PRESETS } from "@/lib/admin-types";
 import type { Category } from "@/lib/content";
 import MarkdownEditor from "@/components/admin/markdown-editor";
+import AssetUploadField from "@/components/admin/asset-upload-field";
 import CategorySelect, {
   CategoryMultiSelect,
 } from "@/components/admin/category-select";
@@ -435,27 +436,29 @@ function ContentForm({
         </details>
       ) : null}
 
-      <div className="row" style={{ gap: 10, marginTop: 12, flexWrap: "wrap" }}>
-        <div style={{ flex: 1, minWidth: 180 }}>
-          <label className="label">自定义图标</label>
-          <input
-            className="input"
-            name="icon"
-            value={icon}
-            onChange={(e) => setIcon(e.target.value)}
-            placeholder="图片地址（远程自动本地化）"
-          />
-        </div>
-        <div style={{ flex: 1, minWidth: 180 }}>
-          <label className="label">封面图</label>
-          <input
-            className="input"
+      <div
+        className="row"
+        style={{ gap: 16, marginTop: 12, alignItems: "flex-start", flexWrap: "wrap" }}
+      >
+        <AssetUploadField
+          label="自定义图标"
+          name="icon"
+          value={icon}
+          onChange={setIcon}
+          placeholder="图片地址，或直接上传"
+          hint="建议方形图标；远程图片保存后会自动下载到本地"
+        />
+        {type === "article" ? (
+          <AssetUploadField
+            label="封面图"
             name="cover"
             value={cover}
-            onChange={(e) => setCover(e.target.value)}
-            placeholder="文章无图标时用作缩略图"
+            onChange={setCover}
+            placeholder="图片地址，或直接上传"
+            hint="文章无图标时用作缩略图"
+            previewStyle={{ width: 88, objectFit: "cover" }}
           />
-        </div>
+        ) : null}
       </div>
 
       <div className="row" style={{ gap: 10, marginTop: 12, flexWrap: "wrap" }}>

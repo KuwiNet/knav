@@ -20,6 +20,8 @@ const MIME: Record<string, string> = {
   avif: "image/avif",
   bmp: "image/bmp",
   ico: "image/x-icon",
+  // 历史数据里有 SVG 图标；上传入口本身不接受 SVG
+  svg: "image/svg+xml",
   pdf: "application/pdf",
   zip: "application/zip",
   txt: "text/plain; charset=utf-8",
@@ -49,15 +51,19 @@ export async function GET(
     if (!stat.isFile()) return notFound();
     const data = await fs.readFile(abs);
     const ext = path.extname(abs).slice(1).toLowerCase();
-    return new NextResponse(new Uint8Array(data), {
-      headers: {
-        "Content-Type": MIME[ext] ?? "application/octet-stream",
-        "Content-Length": String(data.byteLength),
-        // 上传文件名是随机串，内容不会变，可以长期缓存
-        "Cache-Control": "public, max-age=31536000, immutable",
-        "X-Content-Type-Options": "nosniff",
-      },
-    });
+    const headers: Record<string, string> = {
+      "Content-Type": MIME[ext] ?? "application/octet-stream",
+      "Content-Length": String(data.byteLength),
+      // 上传文件名是随机串，内容不会变，可以长期缓存
+      "Cache-Control": "public, max-age=31536000, immutable",
+      "X-Content-Type-Options": "nosniff",
+    };
+    // 历史 SVG 图标直接打开时禁止执行脚本
+    if (ext === "svg") {
+      headers["Content-Security-Policy"] =
+        "default-src 'none'; style-src 'unsafe-inline'; sandbox";
+    }
+    return new NextResponse(new Uint8Array(data), { headers });
   } catch {
     return notFound();
   }

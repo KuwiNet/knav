@@ -15,3 +15,8 @@ export interface AvatarState extends FormState {
   /** 保存后的头像站内地址；空串表示用默认首字母头像 */
   avatar?: string;
 }
+
+/** 内容编辑页直接上传图片的结果 */
+export type AssetUploadState =
+  | { ok: true; url: string }
+  | { ok: false; error: string };

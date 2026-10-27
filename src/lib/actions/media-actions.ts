@@ -15,7 +15,7 @@ import {
   scanUploadsToMedia,
   MAX_IMAGE_BYTES,
 } from "@/lib/media";
-import type { FormState } from "./types";
+import type { AssetUploadState, FormState } from "./types";
 
 /**
  * 素材库相关动作。
@@ -28,16 +28,23 @@ async function requireAdmin() {
   return user!;
 }
 
-/** 上传本地文件到 public/uploads */
-export async function uploadMediaAction(
-  _prev: FormState,
+type SavedUpload = {
+  buf: Buffer;
+  filename: string;
+  mime: string;
+  relPath: string;
+  width?: number;
+  height?: number;
+};
+
+/** 校验并保存上传的图片，素材库与内容编辑共用 */
+async function saveUploadedImage(
   fd: FormData
-): Promise<FormState> {
-  await requireAdmin();
+): Promise<{ ok: true; file: SavedUpload } | { ok: false; error: string }> {
   const file = fd.get("file");
   // 不使用 instanceof File：Node 18 没有全局 File 构造函数，会直接抛 ReferenceError
   if (!file || typeof file !== "object" || !("arrayBuffer" in file)) {
-    return { error: "请选择要上传的文件" };
+    return { ok: false, error: "请选择要上传的文件" };
   }
   const f = file as unknown as {
     size: number;
@@ -46,10 +53,13 @@ export async function uploadMediaAction(
     arrayBuffer(): Promise<ArrayBuffer>;
   };
   if (!f.size) {
-    return { error: "请选择要上传的文件" };
+    return { ok: false, error: "请选择要上传的文件" };
   }
   if (f.size > MAX_IMAGE_BYTES) {
-    return { error: `文件过大（${Math.round(f.size / 1024 / 1024)}MB），上限 ${Math.round(MAX_IMAGE_BYTES / 1024 / 1024)}MB` };
+    return {
+      ok: false,
+      error: `文件过大（${Math.round(f.size / 1024 / 1024)}MB），上限 ${Math.round(MAX_IMAGE_BYTES / 1024 / 1024)}MB`,
+    };
   }
 
   const buf = Buffer.from(await f.arrayBuffer());
@@ -58,28 +68,78 @@ export async function uploadMediaAction(
   const ext = imageExtFromBytes(buf);
   if (!ext) {
     return {
+      ok: false,
       error: "只支持 PNG / JPEG / GIF / WebP / AVIF / BMP / ICO 图片（不支持 SVG）",
     };
   }
   const mime = imageMimeOf(ext);
 
   const saved = await saveBufferToLocal(buf, ext, f.name);
-  if (!saved.ok || !saved.relPath) return { error: saved.error ?? "保存失败" };
+  if (!saved.ok || !saved.relPath) {
+    return { ok: false, error: saved.error ?? "保存失败" };
+  }
+  return {
+    ok: true,
+    file: {
+      buf,
+      filename: f.name,
+      mime,
+      relPath: saved.relPath,
+      width: saved.width,
+      height: saved.height,
+    },
+  };
+}
+
+/** 上传本地文件到 public/uploads */
+export async function uploadMediaAction(
+  _prev: FormState,
+  fd: FormData
+): Promise<FormState> {
+  await requireAdmin();
+  const r = await saveUploadedImage(fd);
+  if (!r.ok) return { error: r.error };
+  const { file } = r;
 
   await recordMedia({
-    filename: f.name,
-    path: saved.relPath,
-    url: saved.relPath,
-    mime,
-    size: buf.length,
-    width: saved.width ?? 0,
-    height: saved.height ?? 0,
+    filename: file.filename,
+    path: file.relPath,
+    url: file.relPath,
+    mime: file.mime,
+    size: file.buf.length,
+    width: file.width ?? 0,
+    height: file.height ?? 0,
     alt: "",
   });
 
-  await logAction("media.upload", f.name, { path: saved.relPath });
+  await logAction("media.upload", file.filename, { path: file.relPath });
   revalidatePath("/admin/media");
-  return { success: `上传成功：${saved.relPath}` };
+  return { success: `上传成功：${file.relPath}` };
+}
+
+/** 内容编辑页直接上传图标 / 封面，返回站内地址并同步登记素材库 */
+export async function uploadContentAssetAction(
+  fd: FormData
+): Promise<AssetUploadState> {
+  await requireAdmin();
+  const r = await saveUploadedImage(fd);
+  if (!r.ok) return { ok: false, error: r.error };
+  const { file } = r;
+
+  await recordMedia({
+    filename: file.filename,
+    path: file.relPath,
+    url: file.relPath,
+    mime: file.mime,
+    size: file.buf.length,
+    width: file.width ?? 0,
+    height: file.height ?? 0,
+    alt: "",
+  });
+
+  await logAction("content.asset.upload", file.filename, { path: file.relPath });
+  revalidatePath("/admin/media");
+  return { ok: true, url: file.relPath };
 }
 
 /** 扫描 public/uploads，登记磁盘上已有但数据库没记录的图片 */
