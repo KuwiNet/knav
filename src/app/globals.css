@@ -1399,6 +1399,13 @@ select {
   color: var(--text);
 }
 
+/* 侧栏「当前账号」里的长用户名 / 邮箱要能折行，不能顶破卡片 */
+.aside-link.account-line {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  min-width: 0;
+}
+
 .aside-count {
   margin-left: auto;
   font-size: 11.5px;
@@ -2272,6 +2279,38 @@ select {
   }
 }
 
+/* 第三方账号绑定列表（个人中心 / 后台用户面板共用） */
+.binding-list {
+  display: grid;
+  gap: 8px;
+}
+
+.binding-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.binding-main {
+  min-width: 0;
+}
+
+.binding-main .hint {
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 560px) {
+  .binding-row {
+    flex-wrap: wrap;
+  }
+}
+
 /* ---------------------------------------------------------------- 危险操作 / 站点重置 */
 .danger-zone {
   padding: 14px 16px;
@@ -2598,6 +2637,7 @@ select {
 
 .avatar-panel {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
 }
 
@@ -2608,6 +2648,9 @@ select {
   padding: 2px 2px 8px;
   scrollbar-width: thin;
   scroll-snap-type: x proximity;
+  /* flex 的 min-content 会把上层单列网格撑到 800px+，必须允许收缩后横向滚动 */
+  min-width: 0;
+  width: 100%;
 }
 
 .avatar-swatch {

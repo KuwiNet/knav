@@ -54,6 +54,7 @@ import { resetAssetBaseCache } from "@/lib/asset-url";
 import { resetWallpaperCache } from "@/lib/wallpaper";
 import { fetchSiteMeta } from "@/lib/site-fetch";
 import { logAction } from "@/lib/admin-log";
+import { unbindIdentity, PROVIDER_LABEL, type Provider } from "@/lib/social-auth";
 import { resetSite } from "@/lib/site-reset";
 import { RESET_SCOPES } from "@/lib/site-reset-config";
 import {
@@ -324,6 +325,37 @@ export async function resetUserPasswordAction(
       ? "密码已重置，会话已失效；邮件与站内通知已发出，用户可用临时密码登录，也可点链接自行重设"
       : "已发送「设置新密码」链接（站内通知 + 邮件），当前密码未改动",
   };
+}
+
+/**
+ * 后台解绑用户的第三方账号。
+ * 与用户自助解绑共用同一套保护：不能把账号解成没有任何登录方式的状态。
+ */
+export async function adminUnbindIdentityAction(
+  _prev: FormState,
+  fd: FormData
+): Promise<FormState> {
+  const me = await requireAdmin();
+  const userId = Number(fd.get("userId"));
+  const provider = String(fd.get("provider") ?? "");
+  if (!userId || !provider) return { error: "缺少参数" };
+
+  const target = await queryOne<{ username: string; role: string }>(
+    "SELECT username, role FROM knav_users WHERE id = ? LIMIT 1",
+    [userId]
+  );
+  if (!target) return { error: "用户不存在" };
+  if (target.role === "owner" && me.id !== userId) {
+    return { error: "站长账号的绑定只能由站长本人管理" };
+  }
+
+  const r = await unbindIdentity(userId, provider);
+  if (!r.ok) return { error: r.error ?? "解绑失败" };
+
+  const label = PROVIDER_LABEL[provider as Provider] ?? provider;
+  await logAction("user.unbind", `用户 #${userId} ${target.username}`, provider);
+  revalidatePath("/admin/users");
+  return { success: `已解绑 ${target.username} 的 ${label} 账号` };
 }
 
 /**

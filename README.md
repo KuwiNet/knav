@@ -58,7 +58,8 @@ knav 是一个基于 Next.js 15 与 MySQL 8 的导航站 / 资源分享站点系
   - 上传按文件头魔数判定真实格式（PNG / JPEG / GIF / WebP），拒收 SVG
   - 内置头像与默认头像排成一行横向滚动，窄屏左右滑动
 - **多方式登录**：账号密码 / Telegram / GitHub OAuth2 / Gitee OAuth2 / Google OAuth2
-  - 后台可分别开关并配置凭据；第三方账号首次登录自动建号（`provider + provider_id` 唯一）
+  - 后台可分别开关并配置凭据；首次登录需选择「绑定已有账号」或「新建账号」，新建账号读取第三方资料作默认值并可修改，邮箱必须完成本站验证
+  - 个人中心可查看、绑定、解绑各平台账号；后台用户管理可查看绑定并代为解绑
   - 后台「登录方式」直接列出可复制的回调地址：`<站点地址>/api/auth/<github|gitee|google>/callback`
   - 回调地址与实际登录提交的 `redirect_uri` 同源同算法，支持子目录部署
 
@@ -137,7 +138,9 @@ knav 使用独立的 `knav_*` 表结构。
 
 | 表 | 用途 |
 |---|---|
-| `knav_users` | 站点账号（用户名、密码哈希、角色、状态、邮箱验证、第三方登录绑定） |
+| `knav_users` | 站点账号（用户名、密码哈希、角色、状态、邮箱验证） |
+| `knav_user_identities` | 第三方账号绑定（一个用户可绑多个平台，第三方账号全局唯一） |
+| `knav_social_tickets` | 第三方首次登录的一次性票据（绑定已有账号 / 新建账号） |
 | `knav_sessions` | 登录会话（token 仅存 sha256 哈希） |
 | `knav_email_tokens` | 邮箱验证 / 重置密码令牌 |
 | `knav_notifications` | 站内通知 |

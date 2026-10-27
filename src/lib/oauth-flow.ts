@@ -1,9 +1,10 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { createSession } from "@/lib/auth";
+import { createSession, getCurrentUser } from "@/lib/auth";
 import { normalizeOrigin } from "./asset-url";
 import { getSetting } from "./settings";
 import {
+  bindIdentity,
   exchangeGiteeCode,
   exchangeGithubCode,
   exchangeGoogleCode,
@@ -13,8 +14,11 @@ import {
   getGiteeConfig,
   getGithubConfig,
   getGoogleConfig,
+  intentCookie,
+  issueSocialTicket,
   loginBySocial,
   makeOAuthState,
+  PROVIDER_LABEL,
   stateCookie,
   type OAuthProvider,
   type SocialProfile,
@@ -99,23 +103,37 @@ export async function startOAuth(
 ): Promise<Response> {
   const spec = OAUTH_SPECS[provider];
   const flag = `login_${provider}`;
+  const intent =
+    new URL(req.url).searchParams.get("intent") === "bind" ? "bind" : "login";
 
-  if ((await getSetting(flag)) !== "1") {
-    return NextResponse.redirect(
-      new URL(`/login?err=${provider}_disabled`, req.url)
+  const fail = (reason: string) =>
+    NextResponse.redirect(
+      new URL(
+        intent === "bind"
+          ? `/dashboard/profile?social_error=${encodeURIComponent(reason)}`
+          : `/login?err=${provider}_${reason}`,
+        req.url
+      )
     );
+
+  if (intent === "bind" && !(await getCurrentUser())) {
+    return NextResponse.redirect(new URL("/login", req.url));
   }
+  if ((await getSetting(flag)) !== "1") return fail("disabled");
 
   const { clientId } = await spec.getConfig();
-  if (!clientId) {
-    return NextResponse.redirect(
-      new URL(`/login?err=${provider}_not_configured`, req.url)
-    );
-  }
+  if (!clientId) return fail("not_configured");
 
   const state = makeOAuthState();
   const jar = await cookies();
   jar.set(stateCookie(provider), state, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 600,
+  });
+  jar.set(intentCookie(provider), intent, {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
@@ -133,7 +151,7 @@ export async function startOAuth(
   return NextResponse.redirect(auth.toString());
 }
 
-/** 处理来源回调：校验 state → 换 token → 取资料 → 建号登录 */
+/** 处理来源回调：校验 state → 换 token → 取资料 → 登录 / 绑定 / 待完成 */
 export async function completeOAuth(
   req: Request,
   provider: OAuthProvider
@@ -148,11 +166,16 @@ export async function completeOAuth(
 
   const jar = await cookies();
   const expect = jar.get(stateCookie(provider))?.value ?? "";
+  const intent = jar.get(intentCookie(provider))?.value === "bind" ? "bind" : "login";
   jar.delete(stateCookie(provider));
+  jar.delete(intentCookie(provider));
 
+  const done = (path: string) => NextResponse.redirect(new URL(path, req.url));
   const fail = (reason: string) =>
-    NextResponse.redirect(
-      new URL(`/login?err=${encodeURIComponent(reason)}`, req.url)
+    done(
+      intent === "bind"
+        ? `/dashboard/profile?social_error=${encodeURIComponent(reason)}`
+        : `/login?err=${encodeURIComponent(reason)}`
     );
 
   if (denied) return fail(`${provider}_denied`);
@@ -177,9 +200,35 @@ export async function completeOAuth(
   const prof = await spec.fetchProfile(token.token);
   if (!prof.ok) return fail(`${provider}_profile_failed`);
 
-  const r = await loginBySocial(prof.profile);
-  if (!r.ok) return fail(`${provider}_login_failed`);
+  /* ------------------------------------------------------------ 绑定当前账号 */
+  if (intent === "bind") {
+    const user = await getCurrentUser();
+    if (!user) return fail("登录状态已失效，请重新登录后再绑定");
+    const bound = await bindIdentity(user.id, prof.profile);
+    if (!bound.ok) return fail(bound.error);
+    return done(`/dashboard/profile?social=bound&provider=${provider}`);
+  }
 
-  await createSession(r.userId, req);
-  return NextResponse.redirect(new URL("/dashboard", req.url));
+  /* ---------------------------------------------------------------- 登录 */
+  const r = await loginBySocial(prof.profile);
+  if (r.ok) {
+    await createSession(r.userId, req);
+    return done("/dashboard");
+  }
+
+  if (r.code === "not_found") {
+    const ticket = await issueSocialTicket(prof.profile);
+    return done(`/social/complete?ticket=${ticket}`);
+  }
+
+  if (r.code === "pending") {
+    const q = new URLSearchParams({
+      pending: "1",
+      email: r.email ?? "",
+      provider: PROVIDER_LABEL[provider],
+    });
+    return done(`/verify-email?${q.toString()}`);
+  }
+
+  return fail(`${provider}_login_failed`);
 }

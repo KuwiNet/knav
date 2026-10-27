@@ -92,6 +92,20 @@ async function ensureColumns(conn: mysql.Connection, db: string): Promise<void> 
     }
   }
 
+  /* 多平台绑定：把老库里单列的 provider / provider_id 回填到绑定表（幂等） */
+  const [backfillIdentities] = await conn.query<any>(
+    `INSERT IGNORE INTO knav_user_identities
+       (user_id, provider, provider_id, provider_email)
+     SELECT id, provider, provider_id, COALESCE(provider_email, '')
+       FROM knav_users
+      WHERE provider IS NOT NULL AND provider <> '' AND provider <> 'password'
+        AND provider_id IS NOT NULL AND provider_id <> ''`
+  );
+  const identitiesAdded = Number((backfillIdentities as any).affectedRows) || 0;
+  if (identitiesAdded > 0) {
+    console.log(`已把 ${identitiesAdded} 个第三方账号回填到绑定表`);
+  }
+
   /* 多分类：把历史内容的主分类补进关联表（幂等） */
   const [backfill] = await conn.query<any>(
     `INSERT IGNORE INTO knav_content_categories (content_id, category_id)

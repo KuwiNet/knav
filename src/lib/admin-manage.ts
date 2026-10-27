@@ -815,6 +815,7 @@ export async function deleteManagedUser(
     }
   }
   await execute("DELETE FROM knav_sessions WHERE user_id = ?", [id]);
+  await execute("DELETE FROM knav_user_identities WHERE user_id = ?", [id]);
   await execute("DELETE FROM knav_favorites WHERE user_id = ?", [id]);
   await execute("DELETE FROM knav_notifications WHERE user_id = ?", [id]);
   await execute("DELETE FROM knav_email_tokens WHERE user_id = ?", [id]);

@@ -40,6 +40,39 @@ CREATE TABLE IF NOT EXISTS `knav_users` (
   KEY `idx_status` (`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='站点用户';
 
+-- ------------------------------------------------------- 第三方账号绑定
+-- 一个用户可绑定多个平台；同一平台只能绑一个，同一第三方账号只能属于一个用户。
+CREATE TABLE IF NOT EXISTS `knav_user_identities` (
+  `id`                BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id`           BIGINT UNSIGNED NOT NULL,
+  `provider`          VARCHAR(20)  NOT NULL                COMMENT 'telegram/github/gitee/google',
+  `provider_id`       VARCHAR(190) NOT NULL                COMMENT '第三方用户唯一标识',
+  `provider_username` VARCHAR(190) NOT NULL DEFAULT ''     COMMENT '第三方用户名',
+  `provider_email`    VARCHAR(190) NOT NULL DEFAULT ''     COMMENT '第三方返回的邮箱',
+  `created_at`        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_provider` (`provider`, `provider_id`),
+  UNIQUE KEY `uk_user_provider` (`user_id`, `provider`),
+  KEY `idx_user` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='第三方账号绑定';
+
+-- 首次第三方登录还没决定「绑定已有账号 / 新建账号」时的临时票据。
+CREATE TABLE IF NOT EXISTS `knav_social_tickets` (
+  `id`             CHAR(64)     NOT NULL                COMMENT '一次性票据的 sha256',
+  `provider`       VARCHAR(20)  NOT NULL,
+  `provider_id`    VARCHAR(190) NOT NULL,
+  `username`       VARCHAR(190) NOT NULL DEFAULT '',
+  `nickname`       VARCHAR(190) NOT NULL DEFAULT '',
+  `avatar`         VARCHAR(500) NOT NULL DEFAULT '',
+  `email`          VARCHAR(190) NOT NULL DEFAULT '',
+  `email_verified` TINYINT(1)   NOT NULL DEFAULT 0,
+  `expires_at`     DATETIME     NOT NULL,
+  `created_at`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_identity` (`provider`, `provider_id`),
+  KEY `idx_expires` (`expires_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='第三方首次登录待完成票据';
+
 -- ---------------------------------------------------------------- 会话
 CREATE TABLE IF NOT EXISTS `knav_sessions` (
   `id`         CHAR(64)     NOT NULL                    COMMENT '会话 token 的 sha256',

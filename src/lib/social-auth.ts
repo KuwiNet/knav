@@ -1,16 +1,18 @@
 import crypto from "node:crypto";
-import { query, queryOne, execute } from "./db";
+import { query, queryOne, execute, transaction } from "./db";
 import { getSetting } from "./settings";
+import { resendVerifyEmail, validateEmail, validateUsername } from "./auth";
 
 /**
- * 第三方登录。
+ * 第三方登录与账号绑定。
  *
  * 支持四种（后台「站点设置 → 登录方式」里分别开关并配置）：
- *   - Telegram：官方登录组件 → 服务端校验签名 → 建号登录
- *   - GitHub / Gitee / Google：OAuth2 授权码流程 → 换 token → 取用户信息 → 建号登录
+ *   - Telegram：官方登录组件 → 服务端校验签名 → 登录或绑定
+ *   - GitHub / Gitee / Google：OAuth2 授权码流程 → 换 token → 取用户信息
  *
- * 第三方账号首次登录会自动建号（provider / provider_id 唯一），
- * 之后同一账号直接登录，不再走密码。
+ * 绑定关系存在 knav_user_identities，一个用户可绑多个平台。
+ * 未绑定过的第三方账号不会静默建号：先签发一次性票据，由用户选择
+ * 「绑定已有账号」或「新建账号（邮箱需验证）」。
  */
 
 export type Provider = "telegram" | "github" | "gitee" | "google";
@@ -319,84 +321,443 @@ export async function fetchGoogleProfile(
   }
 }
 
-/* ---------------------------------------------------------------- 建号 / 登录 */
+/* ------------------------------------------------------------ 绑定关系 / 登录 */
 
-/** 生成一个可用的用户名（来源侧用户名可能被占用） */
-function uniqueUsername(base: string): string {
-  const clean = (base || "user")
-    .replace(/[^a-zA-Z0-9_.-]/g, "")
-    .slice(0, 40)
-    .toLowerCase();
-  return clean || "user";
+export interface UserIdentity {
+  provider: Provider;
+  providerId: string;
+  username: string;
+  email: string;
+  createdAt: string;
+}
+
+interface IdentityRow {
+  user_id: number;
+  provider: string;
+  provider_id: string;
+  provider_username: string;
+  provider_email: string;
+  created_at: string;
+}
+
+const PROVIDERS: Provider[] = ["telegram", "github", "gitee", "google"];
+
+function isProvider(value: string): value is Provider {
+  return (PROVIDERS as string[]).includes(value);
+}
+
+function toIdentity(row: IdentityRow): UserIdentity | null {
+  if (!isProvider(row.provider)) return null;
+  return {
+    provider: row.provider,
+    providerId: row.provider_id,
+    username: row.provider_username,
+    email: row.provider_email,
+    createdAt: row.created_at,
+  };
+}
+
+/** 某个用户绑定的全部第三方账号 */
+export async function listUserIdentities(userId: number): Promise<UserIdentity[]> {
+  const rows = await query<IdentityRow>(
+    `SELECT user_id, provider, provider_id, provider_username, provider_email, created_at
+       FROM knav_user_identities WHERE user_id = ? ORDER BY id`,
+    [userId]
+  );
+  return rows.map(toIdentity).filter((x): x is UserIdentity => x !== null);
+}
+
+/** 批量取多个用户的绑定（后台用户列表用，避免 N+1 查询） */
+export async function getUserIdentityMap(
+  userIds: number[]
+): Promise<Record<number, UserIdentity[]>> {
+  const out: Record<number, UserIdentity[]> = {};
+  if (userIds.length === 0) return out;
+  const ph = userIds.map(() => "?").join(",");
+  const rows = await query<IdentityRow>(
+    `SELECT user_id, provider, provider_id, provider_username, provider_email, created_at
+       FROM knav_user_identities WHERE user_id IN (${ph}) ORDER BY id`,
+    userIds
+  );
+  for (const row of rows) {
+    const item = toIdentity(row);
+    if (!item) continue;
+    (out[row.user_id] ??= []).push(item);
+  }
+  return out;
+}
+
+/** 把第三方资料绑定到指定用户 */
+export async function bindIdentity(
+  userId: number,
+  profile: SocialProfile
+): Promise<{ ok: true; already?: boolean } | { ok: false; error: string }> {
+  const hit = await queryOne<{ user_id: number }>(
+    "SELECT user_id FROM knav_user_identities WHERE provider = ? AND provider_id = ? LIMIT 1",
+    [profile.provider, profile.id]
+  );
+  if (hit) {
+    if (hit.user_id === userId) return { ok: true, already: true };
+    return {
+      ok: false,
+      error: `该 ${PROVIDER_LABEL[profile.provider]} 账号已绑定到其他用户`,
+    };
+  }
+
+  const own = await queryOne<{ provider_id: string }>(
+    "SELECT provider_id FROM knav_user_identities WHERE user_id = ? AND provider = ? LIMIT 1",
+    [userId, profile.provider]
+  );
+  if (own) {
+    return {
+      ok: false,
+      error: `当前账号已绑定另一个 ${PROVIDER_LABEL[profile.provider]} 账号，请先解绑`,
+    };
+  }
+
+  try {
+    await execute(
+      `INSERT INTO knav_user_identities
+         (user_id, provider, provider_id, provider_username, provider_email)
+       VALUES (?,?,?,?,?)`,
+      [
+        userId,
+        profile.provider,
+        profile.id,
+        (profile.username || "").slice(0, 190),
+        (profile.email || "").slice(0, 190),
+      ]
+    );
+  } catch (e) {
+    if ((e as { code?: string }).code === "ER_DUP_ENTRY") {
+      return { ok: false, error: "该第三方账号刚刚被其他用户绑定，请重新授权" };
+    }
+    throw e;
+  }
+  return { ok: true };
 }
 
 /**
- * 按第三方账号找到或创建本地用户。
- * 返回 null 表示该来源被禁用。
+ * 解绑某个平台。
+ * 不允许把账号变成「没有密码、也没有任何第三方绑定」的不可登录状态。
  */
-export async function loginBySocial(
-  profile: SocialProfile
-): Promise<{ ok: true; userId: number } | { ok: false; error: string }> {
-  const row = await queryOne<{ id: number; status: string }>(
-    "SELECT id, status FROM knav_users WHERE provider = ? AND provider_id = ? LIMIT 1",
-    [profile.provider, profile.id]
-  );
+export async function unbindIdentity(
+  userId: number,
+  provider: string
+): Promise<{ ok: boolean; error?: string }> {
+  if (!isProvider(provider)) return { ok: false, error: "不支持的登录方式" };
 
-  if (row) {
-    if (row.status === "banned") return { ok: false, error: "账号已被封禁" };
-    await execute(
-      "UPDATE knav_users SET last_login_at = NOW(), login_count = login_count + 1 WHERE id = ?",
-      [row.id]
-    );
-    return { ok: true, userId: row.id };
+  const identity = await queryOne<{ id: number; provider_id: string }>(
+    "SELECT id, provider_id FROM knav_user_identities WHERE user_id = ? AND provider = ? LIMIT 1",
+    [userId, provider]
+  );
+  if (!identity) return { ok: false, error: "该平台尚未绑定" };
+
+  const user = await queryOne<{ password_hash: string }>(
+    "SELECT password_hash FROM knav_users WHERE id = ? LIMIT 1",
+    [userId]
+  );
+  if (!user) return { ok: false, error: "用户不存在" };
+
+  const others = await queryOne<{ n: number }>(
+    "SELECT COUNT(*) AS n FROM knav_user_identities WHERE user_id = ? AND id <> ?",
+    [userId, identity.id]
+  );
+  if (!user.password_hash && Number(others?.n) === 0) {
+    return {
+      ok: false,
+      error: "这是当前账号唯一可用的登录方式；请先设置密码或绑定其他平台再解绑",
+    };
   }
 
-  // 新建账号
-  let username = uniqueUsername(profile.username);
-  const dup = await queryOne<{ id: number }>(
-    "SELECT id FROM knav_users WHERE username = ? LIMIT 1",
-    [username]
+  await execute("DELETE FROM knav_user_identities WHERE id = ?", [identity.id]);
+  // 老库在用户表上也存了一份 provider，清掉它，
+  // 否则迁移脚本下次会把刚解绑的账号重新回填成绑定关系
+  await execute(
+    `UPDATE knav_users SET provider = NULL, provider_id = NULL, provider_email = ''
+      WHERE id = ? AND provider = ? AND provider_id = ?`,
+    [userId, provider, identity.provider_id]
   );
-  if (dup) username = `${username}-${profile.id.slice(0, 6)}`.slice(0, 50);
+  return { ok: true };
+}
 
-  // 邮箱：来源没给就用占位邮箱（第三方登录已由来源验证身份）
-  let email = profile.email?.trim() ?? "";
-  if (!email) email = `${profile.provider}_${profile.id}@social.local`;
-  const emailTaken = await queryOne<{ id: number }>(
-    "SELECT id FROM knav_users WHERE email = ? LIMIT 1",
-    [email]
+/** 已绑定的第三方账号 → 本地用户；未绑定返回 null */
+async function findIdentityAccount(
+  provider: Provider,
+  providerId: string
+): Promise<{
+  userId: number;
+  status: string;
+  email: string;
+  username: string;
+} | null> {
+  const row = await queryOne<{
+    user_id: number;
+    status: string;
+    email: string;
+    username: string;
+  }>(
+    `SELECT i.user_id, u.status, u.email, u.username
+       FROM knav_user_identities i
+       JOIN knav_users u ON u.id = i.user_id
+      WHERE i.provider = ? AND i.provider_id = ?
+      LIMIT 1`,
+    [provider, providerId]
   );
-  if (emailTaken) email = `${profile.provider}_${profile.id}@social.local`;
+  return row
+    ? {
+        userId: row.user_id,
+        status: row.status,
+        email: row.email,
+        username: row.username,
+      }
+    : null;
+}
 
-  const { insertId } = await execute(
-    `INSERT INTO knav_users
-       (username, email, password_hash, nickname, avatar, role, status,
-        email_verified_at, provider, provider_id, provider_email)
-     VALUES (?,?,?,?,?,'user','active',NOW(),?,?,?)`,
-    [
-      username,
-      email,
-      "", // 第三方账号没有密码，登录只能用第三方入口
-      profile.nickname || username,
-      profile.avatar || "",
-      profile.provider,
-      profile.id,
-      profile.email || "",
-    ]
-  );
+export type SocialLoginResult =
+  | { ok: true; userId: number }
+  | {
+      ok: false;
+      code: "not_found" | "pending" | "banned";
+      error?: string;
+      email?: string;
+      username?: string;
+    };
+
+/** 第三方账号登录：只认已绑定账号，不再静默建号 */
+export async function loginBySocial(
+  profile: SocialProfile
+): Promise<SocialLoginResult> {
+  const account = await findIdentityAccount(profile.provider, profile.id);
+  if (!account) return { ok: false, code: "not_found" };
+  if (account.status === "banned") {
+    return { ok: false, code: "banned", error: "账号已被封禁" };
+  }
+  if (account.status !== "active") {
+    return {
+      ok: false,
+      code: "pending",
+      email: account.email,
+      username: account.username,
+    };
+  }
 
   await execute(
-    "INSERT INTO knav_notifications (user_id, type, title, body, link) VALUES (?,?,?,?,?)",
-    [
-      insertId,
-      "system",
-      "欢迎加入",
-      `你已通过${PROVIDER_LABEL[profile.provider]}登录，账号已自动创建。`,
-      "/dashboard/profile",
-    ]
+    "UPDATE knav_users SET last_login_at = NOW(), login_count = login_count + 1 WHERE id = ?",
+    [account.userId]
   );
+  return { ok: true, userId: account.userId };
+}
 
-  return { ok: true, userId: insertId };
+/* ------------------------------------------------------ 首次登录的临时票据 */
+
+export interface SocialTicket {
+  provider: Provider;
+  id: string;
+  username: string;
+  nickname: string;
+  avatar: string;
+  email: string;
+  emailVerified: boolean;
+}
+
+interface TicketRow {
+  provider: string;
+  provider_id: string;
+  username: string;
+  nickname: string;
+  avatar: string;
+  email: string;
+  email_verified: number;
+}
+
+const TICKET_TTL_MINUTES = 30;
+
+function sha256(s: string): string {
+  return crypto.createHash("sha256").update(s).digest("hex");
+}
+
+function ticketToProfile(row: TicketRow): SocialTicket | null {
+  if (!isProvider(row.provider)) return null;
+  return {
+    provider: row.provider,
+    id: row.provider_id,
+    username: row.username,
+    nickname: row.nickname,
+    avatar: row.avatar,
+    email: row.email,
+    emailVerified: !!row.email_verified,
+  };
+}
+
+/** 未绑定的第三方账号先发一张票据，等用户选择绑定或注册 */
+export async function issueSocialTicket(profile: SocialProfile): Promise<string> {
+  const token = crypto.randomBytes(32).toString("hex");
+  const hash = sha256(token);
+
+  await transaction(async (conn) => {
+    await conn.query(
+      "DELETE FROM knav_social_tickets WHERE provider = ? AND provider_id = ?",
+      [profile.provider, profile.id]
+    );
+    await conn.query(
+      `INSERT INTO knav_social_tickets
+         (id, provider, provider_id, username, nickname, avatar, email, email_verified,
+          expires_at)
+       VALUES (?,?,?,?,?,?,?,?, NOW() + INTERVAL ? MINUTE)`,
+      [
+        hash,
+        profile.provider,
+        profile.id,
+        (profile.username || "").slice(0, 190),
+        (profile.nickname || "").slice(0, 190),
+        (profile.avatar || "").slice(0, 500),
+        (profile.email || "").slice(0, 190),
+        profile.emailVerified ? 1 : 0,
+        TICKET_TTL_MINUTES,
+      ]
+    );
+  });
+
+  return token;
+}
+
+/** 读取票据（不消费），页面展示用 */
+export async function readSocialTicket(token: string): Promise<SocialTicket | null> {
+  if (!token) return null;
+  const row = await queryOne<TicketRow>(
+    `SELECT provider, provider_id, username, nickname, avatar, email, email_verified
+       FROM knav_social_tickets WHERE id = ? AND expires_at > NOW() LIMIT 1`,
+    [sha256(token)]
+  );
+  return row ? ticketToProfile(row) : null;
+}
+
+/** 消费票据：只有一次有效，成功后立即删除 */
+export async function consumeSocialTicket(
+  token: string
+): Promise<SocialTicket | null> {
+  if (!token) return null;
+  const hash = sha256(token);
+  return transaction(async (conn) => {
+    const [rows] = await conn.query(
+      `SELECT provider, provider_id, username, nickname, avatar, email, email_verified
+         FROM knav_social_tickets WHERE id = ? AND expires_at > NOW() LIMIT 1 FOR UPDATE`,
+      [hash]
+    );
+    const row = (rows as TicketRow[])[0];
+    if (!row) return null;
+    await conn.query("DELETE FROM knav_social_tickets WHERE id = ?", [hash]);
+    return ticketToProfile(row);
+  });
+}
+
+/* ------------------------------------------------------------ 新建第三方账号 */
+
+function baseUsername(raw: string): string {
+  let clean = (raw || "user")
+    .replace(/[^a-zA-Z0-9_]/g, "")
+    .slice(0, 30)
+    .toLowerCase();
+  if (clean.length < 3) clean = `${clean || "user"}user`.slice(0, 30);
+  return clean;
+}
+
+/** 给首次登录页一个没被占用的建议用户名 */
+export async function suggestUsername(raw: string): Promise<string> {
+  const base = baseUsername(raw);
+  for (let i = 1; i <= 50; i++) {
+    const candidate = i === 1 ? base : `${base}${i}`.slice(0, 30);
+    const hit = await queryOne<{ id: number }>(
+      "SELECT id FROM knav_users WHERE username = ? LIMIT 1",
+      [candidate]
+    );
+    if (!hit) return candidate;
+  }
+  return `${base.slice(0, 24)}${String(Date.now()).slice(-6)}`;
+}
+
+/**
+ * 新建一个第三方账号：账号先进入待验证状态，绑定关系立即建立。
+ * 邮箱必须由本站验证，来源站是否验证过邮箱不作为放行依据。
+ */
+export async function createSocialAccount(
+  profile: SocialProfile,
+  input: { username: string; email: string; nickname?: string }
+): Promise<
+  | { ok: true; userId: number; mailOk: boolean; mailError?: string }
+  | { ok: false; error: string }
+> {
+  const username = input.username.trim();
+  const email = input.email.trim().toLowerCase();
+  const nickname = (input.nickname ?? "").trim().slice(0, 60);
+
+  const uErr = validateUsername(username);
+  if (uErr) return { ok: false, error: uErr };
+  const eErr = validateEmail(email);
+  if (eErr) return { ok: false, error: eErr };
+
+  const identityTaken = await queryOne<{ user_id: number }>(
+    "SELECT user_id FROM knav_user_identities WHERE provider = ? AND provider_id = ? LIMIT 1",
+    [profile.provider, profile.id]
+  );
+  if (identityTaken) {
+    return {
+      ok: false,
+      error: `该 ${PROVIDER_LABEL[profile.provider]} 账号已绑定到其他用户`,
+    };
+  }
+
+  const dup = await queryOne<{ id: number }>(
+    "SELECT id FROM knav_users WHERE username = ? OR email = ? LIMIT 1",
+    [username, email]
+  );
+  if (dup) return { ok: false, error: "用户名或邮箱已被注册" };
+
+  let userId: number;
+  try {
+    userId = await transaction(async (conn) => {
+      const [res] = await conn.query(
+        `INSERT INTO knav_users
+           (username, email, password_hash, nickname, avatar, role, status,
+            email_verified_at)
+         VALUES (?,?,?,?,?,'user','pending',NULL)`,
+        [
+          username,
+          email,
+          "", // 第三方注册先不设密码，需要时可在账号设置里补
+          nickname || username,
+          (profile.avatar || "").slice(0, 500),
+        ]
+      );
+      const newId = Number((res as { insertId: number }).insertId);
+      await conn.query(
+        `INSERT INTO knav_user_identities
+           (user_id, provider, provider_id, provider_username, provider_email)
+         VALUES (?,?,?,?,?)`,
+        [
+          newId,
+          profile.provider,
+          profile.id,
+          (profile.username || "").slice(0, 190),
+          (profile.email || "").slice(0, 190),
+        ]
+      );
+      return newId;
+    });
+  } catch (e) {
+    if ((e as { code?: string }).code === "ER_DUP_ENTRY") {
+      return { ok: false, error: "用户名、邮箱或该第三方账号刚刚被占用，请重试" };
+    }
+    throw e;
+  }
+
+  // 发信失败不撤账号：用户可在登录页或邮箱验证页重发
+  const mail = await resendVerifyEmail(userId);
+  if (!mail.ok) {
+    return { ok: true, userId, mailOk: false, mailError: mail.error };
+  }
+  return { ok: true, userId, mailOk: true };
 }
 
 /* ---------------------------------------------------------------- 配置读取 */
@@ -462,18 +823,20 @@ export function stateCookie(provider: OAuthProvider): string {
   return `kw_${provider}_state`;
 }
 
+/** 本次授权是登录还是给当前账号绑定 */
+export function intentCookie(provider: OAuthProvider): string {
+  return `kw_${provider}_intent`;
+}
+
 /** 生成 state（防 CSRF） */
 export function makeOAuthState(): string {
   return crypto.randomBytes(16).toString("hex");
 }
 
-/** 清理用户名里的非法字符并保证唯一（导出给路由用） */
-export { uniqueUsername };
-
-/** 统计第三方账号数量（后台概览用） */
+/** 统计各平台的绑定数量（后台概览用） */
 export async function countSocialUsers(): Promise<Record<string, number>> {
   const rows = await query<{ provider: string; n: number }>(
-    "SELECT provider, COUNT(*) AS n FROM knav_users GROUP BY provider"
+    "SELECT provider, COUNT(*) AS n FROM knav_user_identities GROUP BY provider"
   );
   const out: Record<string, number> = {};
   for (const r of rows) out[r.provider] = Number(r.n) || 0;

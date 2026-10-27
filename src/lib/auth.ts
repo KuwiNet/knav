@@ -36,6 +36,8 @@ export interface User {
   role: "user" | "editor" | "admin" | "owner";
   status: "pending" | "active" | "banned";
   emailVerified: boolean;
+  /** 是否设置过密码（纯第三方注册的账号初始没有密码） */
+  hasPassword: boolean;
   createdAt: string;
   /** 最近登录时间 */
   lastLoginAt: string;
@@ -67,6 +69,7 @@ function toUser(r: UserRow): User {
     role: r.role,
     status: r.status,
     emailVerified: r.email_verified_at != null,
+    hasPassword: Boolean(r.password_hash),
     createdAt: r.created_at,
     lastLoginAt: r.last_login_at ?? "",
   };
@@ -461,7 +464,8 @@ export async function changePassword(
 
   const row = await queryOne<UserRow>("SELECT * FROM knav_users WHERE id = ? LIMIT 1", [userId]);
   if (!row) return { ok: false, error: "用户不存在" };
-  if (!(await bcrypt.compare(oldPassword, row.password_hash))) {
+  // 纯第三方注册的账号还没有密码，首次设置时无需校验原密码
+  if (row.password_hash && !(await bcrypt.compare(oldPassword, row.password_hash))) {
     return { ok: false, error: "原密码不正确" };
   }
 

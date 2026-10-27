@@ -255,7 +255,7 @@ export function ResetPasswordForm({ token }: { token: string }) {
 
 /* ---------------------------------------------------------------- 重发验证邮件 */
 
-export function ResendVerifyForm() {
+export function ResendVerifyForm({ defaultEmail = "" }: { defaultEmail?: string }) {
   const [state, action] = useActionState<FormState, FormData>(
     resendVerifyAction,
     {}
@@ -273,6 +273,7 @@ export function ResendVerifyForm() {
           id="email"
           name="email"
           type="email"
+          defaultValue={defaultEmail}
           required
           placeholder="填写注册时使用的邮箱"
         />

@@ -75,9 +75,13 @@ export default function SocialLogin({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(user),
         });
-        const data = (await res.json()) as { ok: boolean; error?: string };
+        const data = (await res.json()) as {
+          ok: boolean;
+          error?: string;
+          redirect?: string;
+        };
         if (data.ok) {
-          window.location.href = "/dashboard";
+          window.location.href = data.redirect || "/dashboard";
           return;
         }
         setMsg(data.error || "Telegram 登录失败");

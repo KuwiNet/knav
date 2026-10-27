@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { getCurrentUser, listUsers } from "@/lib/auth";
 import { getAdminStats } from "@/lib/admin";
 import { getUserActivity } from "@/lib/admin-manage";
+import { getUserIdentityMap } from "@/lib/social-auth";
 import { Pagination } from "@/components/pagination";
 import UserManager from "@/components/admin/user-manager";
 
@@ -35,6 +36,7 @@ export default async function AdminUsersPage({
   const total = list.total;
   // 这一页用户的通知数与收藏数
   const activity = await getUserActivity(users.map((u) => u.id));
+  const identities = await getUserIdentityMap(users.map((u) => u.id));
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
@@ -54,6 +56,7 @@ export default async function AdminUsersPage({
         status={status}
         keyword={keyword}
         activity={activity}
+        identities={identities}
         viewerId={viewer.id}
         viewerRole={viewer.role}
       />

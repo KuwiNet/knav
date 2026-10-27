@@ -9,6 +9,7 @@ import {
   resetUserPasswordAction,
   setUserStatusAction,
   transferOwnerAction,
+  adminUnbindIdentityAction,
 } from "@/lib/actions/admin-actions";
 import type { FormState } from "@/lib/actions/types";
 import type { UserActivity } from "@/lib/admin-manage";
@@ -27,6 +28,19 @@ export interface AdminUserRow {
   createdAt: string;
   lastLoginAt: string;
 }
+
+export interface UserIdentityInfo {
+  provider: string;
+  username: string;
+  email: string;
+}
+
+const IDENTITY_PROVIDERS: { key: string; label: string; short: string }[] = [
+  { key: "telegram", label: "Telegram", short: "TG" },
+  { key: "github", label: "GitHub", short: "GitHub" },
+  { key: "gitee", label: "Gitee", short: "Gitee" },
+  { key: "google", label: "Google", short: "Google" },
+];
 
 function SaveButton({ label }: { label: string }) {
   const { pending } = useFormStatus();
@@ -317,11 +331,103 @@ function ResetPasswordForm({
   );
 }
 
+function AdminUnbindButton() {
+  const { pending } = useFormStatus();
+  return (
+    <button
+      type="submit"
+      className="btn btn-sm btn-outline"
+      style={{ color: "var(--red)", borderColor: "var(--red)" }}
+      disabled={pending}
+    >
+      {pending ? "解绑中…" : "解绑"}
+    </button>
+  );
+}
+
+/** 后台查看 / 解绑某个用户的第三方账号 */
+function BindingsPanel({
+  user,
+  identities,
+  readOnly = false,
+  onClose,
+}: {
+  user: AdminUserRow;
+  identities: UserIdentityInfo[];
+  readOnly?: boolean;
+  onClose: () => void;
+}) {
+  const [state, action] = useActionState<FormState, FormData>(
+    adminUnbindIdentityAction,
+    {}
+  );
+  const map = new Map(identities.map((i) => [i.provider, i]));
+
+  return (
+    <div className="inline-panel">
+      <div className="inline-panel-head">
+        <strong className="inline-panel-title">{user.username} 的第三方绑定</strong>
+        <span className="spacer" />
+        <span className="hint" style={{ margin: 0 }}>
+          {readOnly ? "该账号的绑定只能由本人管理" : "解绑后该平台将无法登录这个账号"}
+        </span>
+      </div>
+
+      {state.error ? <div className="alert alert-error">{state.error}</div> : null}
+      {state.success ? <div className="alert alert-success">{state.success}</div> : null}
+
+      <div className="binding-list">
+        {IDENTITY_PROVIDERS.map(({ key, label }) => {
+          const item = map.get(key);
+          return (
+            <div className="binding-row" key={key}>
+              <div className="binding-main">
+                <div className="strong">{label}</div>
+                <div className="hint">
+                  {item
+                    ? [
+                        item.username ? `账号：${item.username}` : "",
+                        item.email ? `邮箱：${item.email}` : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" · ") || "已绑定"
+                    : "未绑定"}
+                </div>
+              </div>
+              {item && !readOnly ? (
+                <form
+                  action={action}
+                  onSubmit={(e) => {
+                    if (!confirm(`确定解绑 ${user.username} 的 ${label} 账号？`)) {
+                      e.preventDefault();
+                    }
+                  }}
+                >
+                  <input type="hidden" name="userId" value={user.id} />
+                  <input type="hidden" name="provider" value={key} />
+                  <AdminUnbindButton />
+                </form>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="inline-panel-actions">
+        <button type="button" className="btn btn-sm btn-ghost" onClick={onClose}>
+          关闭
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function UserManager({
   users,
   status,
   keyword,
   activity,
+  identities,
   viewerId,
   viewerRole,
 }: {
@@ -330,6 +436,8 @@ export default function UserManager({
   keyword: string;
   /** 每个用户的通知数与收藏数（后台按当页批量取） */
   activity: Record<number, UserActivity>;
+  /** 每个用户已绑定的第三方账号 */
+  identities: Record<number, UserIdentityInfo[]>;
   /** 当前登录的后台用户：用来保护站长行、显示站长专属操作 */
   viewerId: number;
   viewerRole: string;
@@ -337,12 +445,13 @@ export default function UserManager({
   const viewerIsOwner = viewerRole === "owner";
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<number | null>(null);
-  // 展开的面板：重置密码 / 通知，都单独占表格的一行，不挤在按钮行里
-  const [panel, setPanel] = useState<{ kind: "reset" | "notify"; id: number } | null>(
-    null
-  );
-  /** 打开某个用户行下方的面板（重置密码 / 通知），同时收掉正在展开的编辑表单 */
-  const openPanel = (kind: "reset" | "notify", id: number) => {
+  // 展开的面板：重置密码 / 通知 / 第三方绑定，都单独占表格的一行
+  const [panel, setPanel] = useState<{
+    kind: "reset" | "notify" | "bindings";
+    id: number;
+  } | null>(null);
+  /** 打开某个用户行下方的面板，同时收掉正在展开的编辑表单 */
+  const openPanel = (kind: "reset" | "notify" | "bindings", id: number) => {
     setEditing(null);
     setPanel((p) => (p && p.kind === kind && p.id === id ? null : { kind, id }));
   };
@@ -412,6 +521,7 @@ export default function UserManager({
               <th style={{ width: 54 }}>ID</th>
               <th>用户</th>
               <th style={{ width: 190 }}>邮箱</th>
+              <th style={{ width: 110 }}>第三方</th>
               <th style={{ width: 76 }}>通知</th>
               <th style={{ width: 60 }}>收藏</th>
               <th style={{ width: 90 }}>状态</th>
@@ -431,6 +541,7 @@ export default function UserManager({
               // 站长行只有本人能编辑/重置密码；封禁、删除对谁都不显示
               const isOwnerRow = u.role === "owner";
               const canManage = !isOwnerRow || u.id === viewerId;
+              const uIdentities = identities[u.id] ?? [];
               return (
                 <Fragment key={u.id}>
                   <tr>
@@ -450,7 +561,23 @@ export default function UserManager({
                         </div>
                       </div>
                     </td>
-                    <td className="text-muted text-sm">{u.email}</td>
+                    <td className="text-muted text-sm" style={{ overflowWrap: "anywhere" }}>
+                      {u.email}
+                    </td>
+                    <td>
+                      {uIdentities.length > 0 ? (
+                        <div className="row" style={{ gap: 4, flexWrap: "wrap" }}>
+                          {uIdentities.map((i) => (
+                            <span key={i.provider} className="badge badge-accent">
+                              {IDENTITY_PROVIDERS.find((p) => p.key === i.provider)
+                                ?.short ?? i.provider}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-muted text-sm">-</span>
+                      )}
+                    </td>
                     <td className="text-sm nowrap">
                       {act.notifications}
                       {act.unread ? (
@@ -512,6 +639,14 @@ export default function UserManager({
                           onClick={() => openPanel("notify", u.id)}
                         >
                           通知
+                        </button>
+
+                        <button
+                          type="button"
+                          className={`btn btn-sm ${panel?.kind === "bindings" && panel.id === u.id ? "" : "btn-outline"}`}
+                          onClick={() => openPanel("bindings", u.id)}
+                        >
+                          绑定
                         </button>
 
                         {viewerIsOwner && u.role === "admin" ? (
@@ -609,7 +744,7 @@ export default function UserManager({
                   {/* 编辑表单就地展开在该用户行的正下方 */}
                   {editing === u.id ? (
                     <tr>
-                      <td colSpan={9} style={{ background: "var(--surface-2)", padding: 10 }}>
+                      <td colSpan={10} style={{ background: "var(--surface-2)", padding: 10 }}>
                         <UserForm
                           /* key 跟着用户走：输入框是 defaultValue（不受控），
                              不换 key 的话，从用户 A 切到用户 B，表单还是 A 的内容 */
@@ -624,17 +759,24 @@ export default function UserManager({
 
                   {panel?.id === u.id ? (
                     <tr>
-                      <td colSpan={9} style={{ background: "var(--surface-2)" }}>
+                      <td colSpan={10} style={{ background: "var(--surface-2)" }}>
                         {panel.kind === "reset" ? (
                           <ResetPasswordForm
                             user={u}
                             onSaved={() => setPanel(null)}
                             onClose={() => setPanel(null)}
                           />
-                        ) : (
+                        ) : panel.kind === "notify" ? (
                           <UserNotify
                             userId={u.id}
                             username={u.username}
+                            onClose={() => setPanel(null)}
+                          />
+                        ) : (
+                          <BindingsPanel
+                            user={u}
+                            identities={uIdentities}
+                            readOnly={!canManage}
                             onClose={() => setPanel(null)}
                           />
                         )}

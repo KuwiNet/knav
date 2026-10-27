@@ -23,9 +23,9 @@ export default async function DashboardLayout({
           <div className="aside-card" style={{ marginTop: 16 }}>
             <div className="aside-title">当前账号</div>
             <ul className="aside-list text-sm">
-              <li className="aside-link">{user.username}</li>
-              <li className="aside-link">{user.email}</li>
-              <li className="aside-link">
+              <li className="aside-link account-line">{user.username}</li>
+              <li className="aside-link account-line">{user.email}</li>
+              <li className="aside-link account-line">
                 {user.emailVerified ? "邮箱已验证" : "邮箱未验证"}
               </li>
             </ul>

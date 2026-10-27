@@ -163,10 +163,12 @@ export async function changePasswordAction(
   const newPassword = String(fd.get("newPassword") ?? "");
   const confirm = String(fd.get("confirm") ?? "");
   if (newPassword !== confirm) return { error: "两次输入的密码不一致" };
+  if (user.hasPassword && !oldPassword) return { error: "请输入当前密码" };
 
   const r = await changePassword(user.id, oldPassword, newPassword);
   if (!r.ok) return { error: r.error ?? "修改失败" };
-  return { success: "密码修改成功" };
+  revalidatePath("/dashboard/profile");
+  return { success: user.hasPassword ? "密码修改成功" : "密码已设置，现在可以用账号密码登录了" };
 }
 
 /** 更新个人资料（头像走 saveAvatarAction，这里不碰，避免旧表单值把刚换的头像覆盖回去） */

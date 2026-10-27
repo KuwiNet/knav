@@ -179,28 +179,34 @@ export function ProfileForm({ user }: { user: User }) {
   );
 }
 
-export function PasswordForm() {
+export function PasswordForm({ hasPassword = true }: { hasPassword?: boolean }) {
   const [state, action] = useActionState<FormState, FormData>(changePasswordAction, {});
 
   return (
     <form action={action} className="card card-pad">
       <h2 className="aside-title" style={{ marginTop: 0 }}>
-        修改密码
+        {hasPassword ? "修改密码" : "设置密码"}
       </h2>
       <Alert state={state} />
-      <div className="field">
-        <label className="label" htmlFor="oldPassword">
-          当前密码
-        </label>
-        <input
-          className="input"
-          id="oldPassword"
-          name="oldPassword"
-          type="password"
-          autoComplete="current-password"
-          required
-        />
-      </div>
+      {hasPassword ? (
+        <div className="field">
+          <label className="label" htmlFor="oldPassword">
+            当前密码
+          </label>
+          <input
+            className="input"
+            id="oldPassword"
+            name="oldPassword"
+            type="password"
+            autoComplete="current-password"
+            required
+          />
+        </div>
+      ) : (
+        <div className="hint" style={{ marginBottom: 12 }}>
+          当前账号还没有密码，设置后可以用用户名或邮箱加密码登录。
+        </div>
+      )}
       <div className="field">
         <label className="label" htmlFor="newPassword">
           新密码
@@ -230,7 +236,7 @@ export function PasswordForm() {
           minLength={8}
         />
       </div>
-      <SubmitButton label="修改密码" />
+      <SubmitButton label={hasPassword ? "修改密码" : "设置密码"} />
     </form>
   );
 }
