@@ -9,6 +9,7 @@ import { sendReviewResultMail } from "./mail";
 import { renderMarkdownSync, sanitizeHtml, excerptFromMarkdown, looksLikeHtml, enhanceCodeBlocks, enhanceImages } from "./markdown";
 import { getCodeConfig } from "./settings";
 import { localizeImage, localizeContentImages } from "./media";
+import { saveContentShortlink } from "./shortlink";
 
 export { sanitizeHtml, excerptFromMarkdown };
 
@@ -235,6 +236,8 @@ export async function reviewSubmission(
     const created = await publishSubmission(sub);
     if (!created.ok) return { ok: false, error: created.error };
     contentId = created.contentId;
+    // 和后台直接保存网址一样，审核通过时顺手生成直达短链
+    await saveContentShortlink(contentId);
   }
 
   await execute(

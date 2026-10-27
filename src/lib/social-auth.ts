@@ -215,7 +215,12 @@ export async function exchangeGiteeCode(
   }
 }
 
-/** 取 Gitee 用户信息（要拿到邮箱，授权时得带 scope=user_info） */
+/**
+ * 取 Gitee 用户信息。
+ *
+ * /user 里的 email 只在账号公开邮箱时才有值；用户把邮箱设为私密时，
+ * 要再用 emails 权限单独查一次（授权 scope 见 oauth-flow.ts）。
+ */
 export async function fetchGiteeProfile(
   token: string
 ): Promise<{ ok: true; profile: SocialProfile } | { ok: false; error: string }> {
@@ -232,6 +237,31 @@ export async function fetchGiteeProfile(
       avatar_url?: string;
       email?: string;
     };
+
+    let email = (u.email ?? "").trim();
+    let verified = false;
+    if (!email) {
+      try {
+        const er = await fetch(
+          `https://gitee.com/api/v5/emails?access_token=${encodeURIComponent(token)}`,
+          { headers: { Accept: "application/json" } }
+        );
+        if (er.ok) {
+          const list = (await er.json()) as { email?: string; state?: string }[];
+          // 优先已确认的主邮箱
+          const hit =
+            list.find((e) => e.email && e.state === "confirmed") ??
+            list.find((e) => e.email);
+          if (hit?.email) {
+            email = hit.email.trim();
+            verified = hit.state === "confirmed";
+          }
+        }
+      } catch {
+        /* 查不到邮箱就留空，让用户在资料页补填 */
+      }
+    }
+
     return {
       ok: true,
       profile: {
@@ -240,8 +270,8 @@ export async function fetchGiteeProfile(
         username: u.login,
         nickname: u.name || u.login,
         avatar: u.avatar_url ?? "",
-        email: u.email ?? "",
-        emailVerified: false,
+        email,
+        emailVerified: verified,
       },
     };
   } catch (e) {

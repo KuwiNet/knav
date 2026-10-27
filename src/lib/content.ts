@@ -23,6 +23,8 @@ export interface ContentItem {
   title: string;
   /** 网址类型的跳转地址；文章/应用为空 */
   url: string;
+  /** YOURLS 直达短链，保存网址时生成；为空时前台回退到 /go/{id} */
+  shortUrl?: string;
   /** 简介/摘要 */
   description: string;
   /** 图标或封面图 URL */
@@ -174,7 +176,7 @@ export async function getContentItems(
   const orderSql = orderMap[orderBy] ?? orderMap.date;
 
   const rows = await query<any>(
-    `SELECT c.id, c.type, c.title, c.url, c.description, c.content_md, c.icon, c.cover,
+    `SELECT c.id, c.type, c.title, c.url, c.short_url, c.description, c.content_md, c.icon, c.cover,
             c.category_id, c.views, c.likes, c.sticky, c.sort_order,
             c.created_at, c.updated_at,
             cat.name AS category_name, cat.slug AS category_slug
@@ -204,6 +206,7 @@ export async function getContentItems(
       type: t,
       title: r.title ?? "",
       url: r.url ?? "",
+      shortUrl: (r.short_url ?? "").trim(),
       description: r.description ?? "",
       // 前台展示统一按当前访问域名取图：生产「站点地址」可能是别的域名/端口，
       // 用它拼绝对地址会让刚本地化的 /uploads 图标 404（后台预览是相对路径，所以看着正常）

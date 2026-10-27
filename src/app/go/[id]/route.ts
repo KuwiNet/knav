@@ -9,8 +9,9 @@ import {
 /**
  * 网址「直达」跳转：/go/{id}
  *
- * 配置了 YOURLS 时先换成短链再跳（结果缓存到 knav_contents.short_url），
- * 未配置或生成失败则直接跳原网址。文章不走这里。
+ * 保存内容时已经把 YOURLS 短链写进 knav_contents.short_url，这里优先直接用；
+ * 旧内容没有短链时再惰性生成一次。未配置或生成失败则直接跳原网址。
+ * 文章不走这里。
  */
 export const dynamic = "force-dynamic";
 
@@ -56,27 +57,22 @@ export async function GET(
     return redirectTo(`/sites/${id}.html`);
   }
 
+  // 保存时已生成过短链，就直接用；即使后来关掉 YOURLS 也不影响已入库的短链
+  const stored = (row.short_url ?? "").trim();
+  if (isHttpUrl(stored)) return redirectTo(stored);
+
   const cfg = await getShortlinkConfig();
   if (shortlinkReady(cfg)) {
-    let shortUrl = (row.short_url ?? "").trim();
-    if (!shortUrl) {
-      const res = await shortenWithYourls(target, cfg);
-      if (res.ok) {
-        shortUrl = res.shortUrl;
-      } else {
-        console.warn(`[shortlink] 内容 #${id} 生成短网址失败：${res.error}`);
-      }
+    const res = await shortenWithYourls(target, cfg);
+    if (res.ok) {
+      // url 同时作为条件：编辑页保存新地址时不会把短链扣在旧地址上
+      await execute(
+        "UPDATE knav_contents SET short_url = ? WHERE id = ? AND url = ?",
+        [res.shortUrl, id, target]
+      ).catch(() => undefined);
+      return redirectTo(res.shortUrl);
     }
-    if (isHttpUrl(shortUrl)) {
-      if (!row.short_url) {
-        // url 同时作为条件：编辑页保存新地址时不会把短链扣在旧地址上
-        await execute(
-          "UPDATE knav_contents SET short_url = ? WHERE id = ? AND url = ?",
-          [shortUrl, id, target]
-        ).catch(() => undefined);
-      }
-      return redirectTo(shortUrl);
-    }
+    console.warn(`[shortlink] 内容 #${id} 生成短网址失败：${res.error}`);
   }
 
   return redirectTo(target);

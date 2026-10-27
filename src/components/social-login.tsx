@@ -125,6 +125,8 @@ export default function SocialLogin({
       s.setAttribute("data-size", "large");
       s.setAttribute("data-radius", "8");
       s.setAttribute("data-userpic", "false");
+      // 官方组件界面只有英文，中文按钮靠下面的覆盖层显示，这里顺手带上语言参数
+      s.setAttribute("data-lang", "zh");
       s.setAttribute("data-onauth", `${TG_CALLBACK}(user)`);
 
       const host = tgRef.current;
@@ -193,14 +195,17 @@ export default function SocialLogin({
       ) : null}
 
       {showTelegram ? (
-        <>
-          <div className="social-tg social-tg-login" ref={tgRef} aria-busy={tgBusy}>
-            {tgBusy ? <span className="hint">正在验证 Telegram 登录…</span> : null}
+        <div className="social-tg-wrap">
+          {/* 官方组件只提供英文按钮，这里用同尺寸的中文按钮盖住外观，
+              透明 iframe 仍在上层负责点击，登录流程不变 */}
+          <div className="social-tg-face" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M21.94 3.3 2.8 10.6c-1.3.5-1.29 1.24-.23 1.57l4.9 1.53 1.9 5.7c.23.63.11.88.78.88.5 0 .72-.23 1-.5l2.4-2.33 4.98 3.68c.92.5 1.58.24 1.8-.85L23.1 4.6c.33-1.34-.5-1.95-1.16-1.3ZM9.4 14.3l10.4-6.55c.52-.31 1-.15.6.2l-8.9 8.03-.35 3.7-1.75-5.38Z" />
+            </svg>
+            <span>{tgBusy ? "正在验证 Telegram 登录…" : "使用 Telegram 登录"}</span>
           </div>
-          <div className="hint social-tg-hint">
-            按钮由 telegram.org 提供，若无法加载请检查网络，或改用其他登录方式。
-          </div>
-        </>
+          <div className="social-tg social-tg-login" ref={tgRef} aria-busy={tgBusy} />
+        </div>
       ) : null}
     </div>
   );

@@ -54,6 +54,7 @@ import { resetAssetBaseCache } from "@/lib/asset-url";
 import { resetWallpaperCache } from "@/lib/wallpaper";
 import { fetchSiteMeta } from "@/lib/site-fetch";
 import { logAction } from "@/lib/admin-log";
+import { saveContentShortlink } from "@/lib/shortlink";
 import { unbindIdentity, PROVIDER_LABEL, type Provider } from "@/lib/social-auth";
 import { resetSite } from "@/lib/site-reset";
 import { RESET_SCOPES } from "@/lib/site-reset-config";
@@ -618,10 +619,15 @@ export async function createContentAction(
   const r = await createContent(input);
   if (!r.ok) return { error: r.error ?? "创建失败" };
   after(() => localizeContentAssets(r.id, input));
+  // 网址保存时就把直达短链生成好，前台不用等第一次点击
+  const short = await saveContentShortlink(r.id);
   await logAction("content.create", String(fd.get("title") ?? ""), { type });
   // 页面都是 force-dynamic，不需要服务端缓存失效；
   // 这里若调用 revalidatePath，Next 会把整页重新渲染后塞进响应，慢链路上「保存中」会很久。
   // 列表由客户端在保存成功后 router.refresh() 更新。
+  if (short && !short.ok) {
+    return { success: `内容已创建；短网址生成失败：${short.error}` };
+  }
   return { success: "内容已创建" };
 }
 
@@ -658,8 +664,13 @@ export async function updateContentAction(
   const r = await updateContent(id, input);
   if (!r.ok) return { error: r.error ?? "保存失败" };
   after(() => localizeContentAssets(id, input));
+  // 地址没变时复用已有短链；改过地址则在这里重新生成
+  const short = await saveContentShortlink(id);
   await logAction("content.update", String(fd.get("title") ?? ""), { type, id });
   // 同上：保存响应只回结果，列表在客户端刷新
+  if (short && !short.ok) {
+    return { success: `已保存；短网址生成失败：${short.error}` };
+  }
   return { success: "已保存" };
 }
 

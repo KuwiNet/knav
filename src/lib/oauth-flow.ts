@@ -65,8 +65,8 @@ export const OAUTH_SPECS: Record<OAuthProvider, OAuthSpec> = {
   gitee: {
     provider: "gitee",
     authorizeUrl: "https://gitee.com/oauth/authorize",
-    // Gitee 的 v5 用户接口要 user_info 权限才返回邮箱
-    scope: "user_info",
+    // user_info 取基本资料，emails 才能在邮箱设为私密时读到授权邮箱
+    scope: "user_info emails",
     getConfig: getGiteeConfig,
     exchange: exchangeGiteeCode,
     fetchProfile: fetchGiteeProfile,

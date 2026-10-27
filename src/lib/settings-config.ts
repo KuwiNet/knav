@@ -147,7 +147,7 @@ export const SETTINGS_FIELDS: SettingField[] = [
     type: "switch",
     group: "shortlink",
     default: "1",
-    hint: "配置好 API 地址与签名后，网址的「直达」会先走 YOURLS 短链；文章不受影响。关掉后直连原网址。",
+    hint: "配置好 API 地址与签名后，保存网址时会同时生成短链存入数据库，「直达」直接用这条短链；文章不受影响。关掉后新保存不再生成，已生成的短链仍可用。",
   },
   {
     key: "yourls_api_url",

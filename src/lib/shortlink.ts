@@ -3,6 +3,7 @@ if (process.env.NEXT_RUNTIME !== undefined) {
   require("server-only");
 }
 import { getSettingMap } from "./settings";
+import { execute, queryOne } from "./db";
 
 /**
  * YOURLS 短网址。
@@ -104,4 +105,42 @@ export async function shortenWithYourls(
     ok: false,
     error: message ? `YOURLS: ${message.slice(0, 200)}` : "YOURLS 生成失败",
   };
+}
+
+/**
+ * 保存网址后生成并写入短链。
+ *
+ * 已有短链且地址没变时直接复用；未配置 YOURLS 时返回 null（不当作错误）。
+ * 生成失败只影响短链，内容本身已经保存成功，由调用方决定怎么提示。
+ */
+export async function saveContentShortlink(
+  id: number
+): Promise<ShortlinkResult | null> {
+  const row = await queryOne<{ type: string; url: string; short_url: string }>(
+    "SELECT type, url, short_url FROM knav_contents WHERE id = ? LIMIT 1",
+    [id]
+  );
+  if (!row || row.type !== "site") return null;
+
+  const target = (row.url ?? "").trim();
+  if (!isHttpUrl(target)) return null;
+
+  const existing = (row.short_url ?? "").trim();
+  if (isHttpUrl(existing)) return { ok: true, shortUrl: existing };
+
+  const cfg = await getShortlinkConfig();
+  if (!shortlinkReady(cfg)) return null;
+
+  const res = await shortenWithYourls(target, cfg);
+  if (!res.ok) {
+    console.warn(`[shortlink] 内容 #${id} 生成短网址失败：${res.error}`);
+    return res;
+  }
+
+  // 生成期间地址可能又被改掉，带上原地址条件，避免短链扣在新网址上
+  await execute(
+    "UPDATE knav_contents SET short_url = ? WHERE id = ? AND url = ?",
+    [res.shortUrl, id, target]
+  ).catch(() => undefined);
+  return res;
 }
