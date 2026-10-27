@@ -5,7 +5,7 @@ if (process.env.NEXT_RUNTIME !== undefined) {
 }
 import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { query, queryOne, execute } from "./db";
 import {
   sendVerifyEmail,
@@ -235,6 +235,19 @@ export async function loginUser(
   return { ok: true, user: toUser(row) };
 }
 
+/**
+ * 生产模式不等于一定走 HTTPS：直连 3000 端口调试时若强制 Secure，
+ * 浏览器会静默丢弃会话 Cookie，表现就是登录后又被弹回登录页。
+ */
+async function requestIsHttps(req?: Request): Promise<boolean> {
+  const forwarded =
+    req?.headers.get("x-forwarded-proto") ??
+    (await headers()).get("x-forwarded-proto");
+  if (forwarded) return forwarded.split(",")[0].trim() === "https";
+  if (req) return new URL(req.url).protocol === "https:";
+  return false;
+}
+
 /** 创建会话并写入 Cookie */
 export async function createSession(userId: number, req?: Request): Promise<void> {
   const token = crypto.randomBytes(32).toString("hex");
@@ -256,7 +269,7 @@ export async function createSession(userId: number, req?: Request): Promise<void
   jar.set(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: await requestIsHttps(req),
     path: "/",
     expires,
   });
