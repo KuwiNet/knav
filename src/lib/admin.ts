@@ -280,6 +280,11 @@ export interface AdminContentRow {
   cover: string;
   /** 自定义图标 */
   icon: string;
+  /** 以下字段供后台就地编辑直接回填，省掉一次打开表单的往返 */
+  url: string;
+  description: string;
+  tags: string;
+  categoryIds: number[];
 }
 
 /** 内容列表（后台用，支持按类型/分类/关键词过滤） */
@@ -329,7 +334,7 @@ export async function listAdminContent(opts: {
 
   const rows = await query<any>(
     `SELECT c.id, c.type, c.title, c.status, c.created_at, c.views, c.sticky,
-            c.sort_order, c.cover, c.icon,
+            c.sort_order, c.cover, c.icon, c.url, c.description, c.category_id,
             COALESCE(
               (SELECT GROUP_CONCAT(cat2.name ORDER BY cat2.sort_order ASC, cat2.id ASC SEPARATOR '、')
                  FROM knav_content_categories cc
@@ -345,24 +350,71 @@ export async function listAdminContent(opts: {
     [...params, limit, offset]
   );
 
+  // 列表页顺带带上标签与全部关联分类：网址编辑打开时可直接回填，不必再请求一次
+  const ids = rows.map((r) => Number(r.id));
+  const tagMap = new Map<number, string[]>();
+  const catMap = new Map<number, number[]>();
+  if (ids.length > 0) {
+    const marks = ids.map(() => "?").join(",");
+    const [tagRows, catRows] = await Promise.all([
+      query<{ content_id: number; name: string }>(
+        `SELECT ct.content_id, t.name
+         FROM knav_content_tags ct
+         JOIN knav_tags t ON t.id = ct.tag_id
+         WHERE ct.content_id IN (${marks})
+         ORDER BY t.id ASC`,
+        ids
+      ),
+      query<{ content_id: number; category_id: number }>(
+        `SELECT content_id, category_id
+         FROM knav_content_categories
+         WHERE content_id IN (${marks})
+         ORDER BY category_id ASC`,
+        ids
+      ),
+    ]);
+    for (const t of tagRows) {
+      const id = Number(t.content_id);
+      const list = tagMap.get(id);
+      if (list) list.push(t.name);
+      else tagMap.set(id, [t.name]);
+    }
+    for (const c of catRows) {
+      const id = Number(c.content_id);
+      const list = catMap.get(id);
+      if (list) list.push(Number(c.category_id));
+      else catMap.set(id, [Number(c.category_id)]);
+    }
+  }
+
   return {
-    items: rows.map((r) => ({
-      id: Number(r.id),
-      type: (r.type === "site" || r.type === "app" ? r.type : "article") as
-        | "site"
-        | "article"
-        | "app",
-      title: r.title ?? "",
-      status: r.status ?? "",
-      author: "",
-      categoryName: r.category_name ?? "",
-      views: Number(r.views) || 0,
-      date: r.created_at ?? "",
-      sticky: Number(r.sticky) || 0,
-      order: Number(r.sort_order) || 0,
-      cover: r.cover ?? "",
-      icon: r.icon ?? "",
-    })),
+    items: rows.map((r) => {
+      const id = Number(r.id);
+      const primary = Number(r.category_id) || 0;
+      return {
+        id,
+        type: (r.type === "site" || r.type === "app" ? r.type : "article") as
+          | "site"
+          | "article"
+          | "app",
+        title: r.title ?? "",
+        status: r.status ?? "",
+        author: "",
+        categoryName: r.category_name ?? "",
+        views: Number(r.views) || 0,
+        date: r.created_at ?? "",
+        sticky: Number(r.sticky) || 0,
+        order: Number(r.sort_order) || 0,
+        cover: r.cover ?? "",
+        icon: r.icon ?? "",
+        url: r.url ?? "",
+        description: r.description ?? "",
+        tags: (tagMap.get(id) ?? []).join(", "),
+        categoryIds: [
+          ...new Set([...(primary ? [primary] : []), ...(catMap.get(id) ?? [])]),
+        ],
+      };
+    }),
     total: Number(totalRow?.n) || 0,
   };
 }

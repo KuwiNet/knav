@@ -619,8 +619,9 @@ export async function createContentAction(
   if (!r.ok) return { error: r.error ?? "创建失败" };
   after(() => localizeContentAssets(r.id, input));
   await logAction("content.create", String(fd.get("title") ?? ""), { type });
-  revalidatePath("/admin/content");
-  revalidatePath("/");
+  // 页面都是 force-dynamic，不需要服务端缓存失效；
+  // 这里若调用 revalidatePath，Next 会把整页重新渲染后塞进响应，慢链路上「保存中」会很久。
+  // 列表由客户端在保存成功后 router.refresh() 更新。
   return { success: "内容已创建" };
 }
 
@@ -657,8 +658,7 @@ export async function updateContentAction(
   if (!r.ok) return { error: r.error ?? "保存失败" };
   after(() => localizeContentAssets(id, input));
   await logAction("content.update", String(fd.get("title") ?? ""), { type, id });
-  revalidatePath("/admin/content");
-  revalidatePath("/");
+  // 同上：保存响应只回结果，列表在客户端刷新
   return { success: "已保存" };
 }
 

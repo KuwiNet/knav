@@ -2,6 +2,7 @@
 
 import { Fragment, useActionState, useEffect, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
+import { useRouter } from "next/navigation";
 import {
   createContentAction,
   updateContentAction,
@@ -523,6 +524,7 @@ export default function ContentManager({
   const [bulkOp, setBulkOp] = useState("");
   const [bulkCat, setBulkCat] = useState(0);
   const filterFormRef = useRef<HTMLFormElement>(null);
+  const router = useRouter();
 
   const toggle = (id: number) =>
     setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
@@ -538,6 +540,34 @@ export default function ContentManager({
     setCreating(false);
     setEditing(id);
     setDetail(null);
+
+    // 网址需要的字段列表里已经带全，直接就地展开；文章/应用按需再取完整内容
+    const row = items.find((x) => x.id === id);
+    if (row && row.type === "site") {
+      setLoading(false);
+      setDetail({
+        id: row.id,
+        type: "site",
+        title: row.title,
+        url: row.url,
+        description: row.description,
+        contentMd: "",
+        categoryId: row.categoryIds[0] ?? 0,
+        categoryIds: row.categoryIds,
+        tags: row.tags,
+        icon: row.icon,
+        cover: row.cover,
+        order: row.order,
+        sticky: row.sticky,
+        status: row.status,
+        date: String(row.date).slice(0, 10),
+        version: "",
+        platform: "",
+        versions: [],
+      });
+      return;
+    }
+
     setLoading(true);
     try {
       const d = await getContentDetailAction(id);
@@ -620,7 +650,10 @@ export default function ContentManager({
           mode="create"
           categories={categories}
           defaultType="site"
-          onSaved={() => setCreating(false)}
+          onSaved={() => {
+            setCreating(false);
+            router.refresh();
+          }}
         />
       ) : null}
 
@@ -842,6 +875,8 @@ export default function ContentManager({
                         onSaved={() => {
                           setEditing(null);
                           setDetail(null);
+                          // 保存接口不再整页回传，列表在后台刷新，不阻塞「保存中」
+                          router.refresh();
                         }}
                       />
                     ) : (
