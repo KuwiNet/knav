@@ -21,6 +21,7 @@ import type {
 } from "@/lib/admin";
 import { PLATFORM_PRESETS, MIRROR_PRESETS, ARCH_PRESETS } from "@/lib/admin-types";
 import CategorySelect, { type CategoryOption } from "@/components/admin/category-select";
+import PresetInput from "@/components/admin/preset-input";
 
 export interface AppOption {
   id: number;
@@ -115,33 +116,23 @@ function PlatformForm({
       <div className="row" style={{ gap: 10, alignItems: "flex-end", marginTop: 8, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 130 }}>
           <label className="label">平台</label>
-          <input
-            className="input"
+          <PresetInput
             name="platform"
-            list="kw-dl-platforms"
+            presets={PLATFORM_PRESETS}
             defaultValue={item?.platform ?? defaultPlatform ?? ""}
-            placeholder="Windows"
+            placeholder="选择或输入平台"
+            listLabel="常用平台"
           />
-          <datalist id="kw-dl-platforms">
-            {PLATFORM_PRESETS.map((p) => (
-              <option key={p} value={p} />
-            ))}
-          </datalist>
         </div>
         <div style={{ flex: 1, minWidth: 120 }}>
           <label className="label">架构</label>
-          <input
-            className="input"
+          <PresetInput
             name="arch"
-            list="kw-dl-archs"
+            presets={ARCH_PRESETS}
             defaultValue={item?.arch ?? defaultArch ?? ""}
-            placeholder="x64 / ARM64，留空不限"
+            placeholder="选择或输入架构，留空不限"
+            listLabel="常用架构"
           />
-          <datalist id="kw-dl-archs">
-            {ARCH_PRESETS.map((a) => (
-              <option key={a} value={a} />
-            ))}
-          </datalist>
         </div>
         <div style={{ flex: 1, minWidth: 120 }}>
           <label className="label">版本</label>
@@ -175,11 +166,12 @@ function PlatformForm({
           <div className="row" style={{ gap: 10, alignItems: "flex-end", marginTop: 6, flexWrap: "wrap" }}>
             <div style={{ flex: 1, minWidth: 140 }}>
               <label className="label">镜像名称</label>
-              <input
-                className="input"
+              <PresetInput
                 name="mirrorName"
-                list="kw-dl-mirrors"
+                presets={MIRROR_PRESETS}
                 defaultValue="官方下载"
+                placeholder="选择或输入镜像名称"
+                listLabel="常用镜像"
               />
             </div>
             <div style={{ flex: 3, minWidth: 220 }}>
@@ -191,11 +183,6 @@ function PlatformForm({
               <input className="input" name="mirrorNote" placeholder="提取码 ab12" />
             </div>
           </div>
-          <datalist id="kw-dl-mirrors">
-            {MIRROR_PRESETS.map((m) => (
-              <option key={m} value={m} />
-            ))}
-          </datalist>
         </>
       ) : primary ? (
         <div className="hint" style={{ marginTop: 10 }}>
@@ -353,21 +340,21 @@ function SoftwareForm({
         <div className="row" style={{ gap: 10, alignItems: "flex-end", marginTop: 8, flexWrap: "wrap" }}>
           <div style={{ flex: 1, minWidth: 120 }}>
             <label className="label">平台</label>
-            <input className="input" name="platform" list="kw-sw-platforms" placeholder="Windows" />
-            <datalist id="kw-sw-platforms">
-              {PLATFORM_PRESETS.map((p) => (
-                <option key={p} value={p} />
-              ))}
-            </datalist>
+            <PresetInput
+              name="platform"
+              presets={PLATFORM_PRESETS}
+              placeholder="选择或输入平台"
+              listLabel="常用平台"
+            />
           </div>
           <div style={{ flex: 1, minWidth: 110 }}>
             <label className="label">架构</label>
-            <input className="input" name="arch" list="kw-sw-archs" placeholder="x64" />
-            <datalist id="kw-sw-archs">
-              {ARCH_PRESETS.map((a) => (
-                <option key={a} value={a} />
-              ))}
-            </datalist>
+            <PresetInput
+              name="arch"
+              presets={ARCH_PRESETS}
+              placeholder="选择或输入架构"
+              listLabel="常用架构"
+            />
           </div>
           <div style={{ flex: 1, minWidth: 100 }}>
             <label className="label">版本</label>
@@ -381,12 +368,13 @@ function SoftwareForm({
         <div className="row" style={{ gap: 10, alignItems: "flex-end", marginTop: 8, flexWrap: "wrap" }}>
           <div style={{ flex: 1, minWidth: 130 }}>
             <label className="label">镜像名称</label>
-            <input className="input" name="mirrorName" list="kw-sw-mirrors" defaultValue="官方下载" />
-            <datalist id="kw-sw-mirrors">
-              {MIRROR_PRESETS.map((m) => (
-                <option key={m} value={m} />
-              ))}
-            </datalist>
+            <PresetInput
+              name="mirrorName"
+              presets={MIRROR_PRESETS}
+              defaultValue="官方下载"
+              placeholder="选择或输入镜像名称"
+              listLabel="常用镜像"
+            />
           </div>
           <div style={{ flex: 3, minWidth: 220 }}>
             <label className="label">下载地址</label>
@@ -472,19 +460,14 @@ function MirrorForm({
       <div className="row" style={{ gap: 8, alignItems: "flex-end", marginTop: 8, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 130 }}>
           <label className="label">镜像名称</label>
-          <input
-            className="input"
+          <PresetInput
             name="name"
-            list="kw-mirror-presets"
+            presets={MIRROR_PRESETS}
             required
             defaultValue={item?.name ?? "官方下载"}
             placeholder="官方下载 / 百度网盘"
+            listLabel="常用镜像"
           />
-          <datalist id="kw-mirror-presets">
-            {MIRROR_PRESETS.map((m) => (
-              <option key={m} value={m} />
-            ))}
-          </datalist>
         </div>
         <div style={{ flex: 3, minWidth: 220 }}>
           <label className="label">下载地址</label>

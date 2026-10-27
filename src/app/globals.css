@@ -1584,6 +1584,53 @@ select {
   text-align: center;
 }
 
+/* 预设 + 自由输入：箭头展开常用项，输入框本身仍可随意填写 */
+.preset-input {
+  position: relative;
+}
+
+.preset-input .input {
+  padding-right: 32px;
+}
+
+.preset-input-toggle {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  bottom: 1px;
+  width: 30px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 0 calc(var(--radius-sm) - 1px) calc(var(--radius-sm) - 1px) 0;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.preset-input-toggle:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.preset-input-panel {
+  min-width: 160px;
+}
+
+.preset-input-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 3px 8px 7px;
+  margin-bottom: 3px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-3);
+  font-size: 12px;
+}
+
 /* 分类多选：勾选框 + 顶部统计 + 底部完成按钮 */
 .cat-select-check {
   width: 16px;
