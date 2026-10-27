@@ -3,12 +3,9 @@ import path from "node:path";
 import { NextResponse } from "next/server";
 
 /**
- * /uploads 动态读取。
- *
- * Next 生产模式启动时会把 public 下的文件列表快照进内存，
- * 启动之后才写入的上传文件不在快照里，会一直 404，重启才生效。
- * 这个路由负责兜底：快照里的文件仍由静态服务处理，
- * 新文件落到这里直接从磁盘读，不用重启。
+ * 上传文件的实际出口，/uploads/:path* 由 next.config 的 beforeFiles
+ * 重写到这里。绕过 Next 的 public 静态快照（启动后才写入的文件会 404），
+ * 也避开静态服务默认的 max-age=0（Cloudflare 每次都要回源校验）。
  */
 
 export const runtime = "nodejs";
@@ -29,7 +26,11 @@ const MIME: Record<string, string> = {
 };
 
 function notFound() {
-  return new NextResponse("Not found", { status: 404 });
+  // 缺文件不能带长缓存，否则 404 会被 CDN 和浏览器缓存一年
+  return new NextResponse("Not found", {
+    status: 404,
+    headers: { "Cache-Control": "no-store" },
+  });
 }
 
 export async function GET(
@@ -39,7 +40,6 @@ export async function GET(
   const { path: segments } = await params;
   if (!segments?.length) return notFound();
 
-  // 文件名是内容哈希，允许长期缓存
   const root = path.join(process.cwd(), "public", "uploads");
   const abs = path.resolve(root, ...segments);
   if (abs !== root && !abs.startsWith(root + path.sep)) return notFound();
@@ -53,6 +53,7 @@ export async function GET(
       headers: {
         "Content-Type": MIME[ext] ?? "application/octet-stream",
         "Content-Length": String(data.byteLength),
+        // 上传文件名是随机串，内容不会变，可以长期缓存
         "Cache-Control": "public, max-age=31536000, immutable",
         "X-Content-Type-Options": "nosniff",
       },

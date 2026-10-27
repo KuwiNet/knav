@@ -15,6 +15,19 @@ const nextConfig: NextConfig = {
       bodySizeLimit: "64mb",
     },
   },
+  async rewrites() {
+    // /uploads 全部交给动态路由（src/app/media/[...path]/route.ts）：
+    // 1. 静态服务对 public 文件只给 max-age=0，经 Cloudflare 每次回源校验，慢链路上图标要等十几秒；
+    // 2. 启动后才写入的上传文件不在 public 快照里，静态匹配会 404，重启才恢复。
+    // 重写到 /media 是为了不落到静态服务，/media 本身也可直接访问，无副作用。
+    return {
+      beforeFiles: [
+        { source: "/uploads/:path*", destination: "/media/:path*" },
+      ],
+      afterFiles: [],
+      fallback: [],
+    };
+  },
 };
 
 export default nextConfig;
