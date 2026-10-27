@@ -1,0 +1,29 @@
+# 依赖
+node_modules/
+
+# 构建产物
+.next/
+.next-build/
+.next.prev/
+out/
+next-env.d.ts
+*.tsbuildinfo
+
+# 环境变量（含凭证，禁止提交；示例文件除外）
+.env*
+!.env.example
+.deploy.env
+.deploy-ok
+
+# 本地开发运行时数据（MySQL 数据目录、日志）
+.devdata/
+
+# 数据库导出与临时文件（建表脚本除外）
+*.sql
+!db/schema.sql
+*.sql.gz
+*.dump
+tmp/
+
+# 运行时上传目录（素材库本地化后的图片，属运行数据不入库）
+public/uploads/
