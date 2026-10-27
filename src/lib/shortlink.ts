@@ -47,6 +47,27 @@ export type ShortlinkResult =
   | { ok: false; error: string };
 
 /**
+ * 从 YOURLS 响应里取出短网址。
+ *
+ * 正常成功响应带 shorturl；部分配置对已存在的长网址返回 409（error:url），
+ * 短链只出现在 shorturl 或 url.keyword 里，也要认。
+ */
+function shortUrlFromResponse(data: any, apiUrl: string): string {
+  const direct = typeof data?.shorturl === "string" ? data.shorturl.trim() : "";
+  if (isHttpUrl(direct)) return direct;
+
+  const keyword = String(data?.url?.keyword ?? "").trim();
+  if (!keyword) return "";
+  try {
+    const base = new URL(apiUrl);
+    const built = `${base.protocol}//${base.host}/${encodeURIComponent(keyword)}`;
+    return isHttpUrl(built) ? built : "";
+  } catch {
+    return "";
+  }
+}
+
+/**
  * 调用 YOURLS 的签名 API：action=shorturl&format=json。
  * 同一长网址 YOURLS 会返回已存在的短链，不会重复生成。
  */
@@ -95,9 +116,15 @@ export async function shortenWithYourls(
   }
 
   if (data?.status === "success") {
-    const shortUrl = String(data.shorturl ?? data.url ?? "").trim();
-    if (isHttpUrl(shortUrl)) return { ok: true, shortUrl };
+    const shortUrl = shortUrlFromResponse(data, cfg.apiUrl);
+    if (shortUrl) return { ok: true, shortUrl };
     return { ok: false, error: "YOURLS 未返回有效的短网址" };
+  }
+
+  // 网址已收录：YOURLS 常见返回 409 + code=error:url，但响应里带着现成短链
+  if (String(data?.code ?? "") === "error:url") {
+    const shortUrl = shortUrlFromResponse(data, cfg.apiUrl);
+    if (shortUrl) return { ok: true, shortUrl };
   }
 
   const message = String(data?.message ?? data?.error ?? "").trim();
@@ -138,9 +165,16 @@ export async function saveContentShortlink(
   }
 
   // 生成期间地址可能又被改掉，带上原地址条件，避免短链扣在新网址上
-  await execute(
-    "UPDATE knav_contents SET short_url = ? WHERE id = ? AND url = ?",
-    [res.shortUrl, id, target]
-  ).catch(() => undefined);
+  try {
+    const r = await execute(
+      "UPDATE knav_contents SET short_url = ? WHERE id = ? AND url = ?",
+      [res.shortUrl, id, target]
+    );
+    if (r.affectedRows === 0) {
+      console.warn(`[shortlink] 内容 #${id} 短链写回未命中，网址可能已变更`);
+    }
+  } catch (e: any) {
+    console.warn(`[shortlink] 内容 #${id} 短链写回失败：${e?.message ?? e}`);
+  }
   return res;
 }

@@ -66,10 +66,17 @@ export async function GET(
     const res = await shortenWithYourls(target, cfg);
     if (res.ok) {
       // url 同时作为条件：编辑页保存新地址时不会把短链扣在旧地址上
-      await execute(
-        "UPDATE knav_contents SET short_url = ? WHERE id = ? AND url = ?",
-        [res.shortUrl, id, target]
-      ).catch(() => undefined);
+      try {
+        const saved = await execute(
+          "UPDATE knav_contents SET short_url = ? WHERE id = ? AND url = ?",
+          [res.shortUrl, id, target]
+        );
+        if (saved.affectedRows === 0) {
+          console.warn(`[shortlink] 内容 #${id} 短链写回未命中，网址可能已变更`);
+        }
+      } catch (e: any) {
+        console.warn(`[shortlink] 内容 #${id} 短链写回失败：${e?.message ?? e}`);
+      }
       return redirectTo(res.shortUrl);
     }
     console.warn(`[shortlink] 内容 #${id} 生成短网址失败：${res.error}`);
