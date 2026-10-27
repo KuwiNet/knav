@@ -319,6 +319,8 @@ npm run db:seed      # 灌入演示数据（会清空内容表）
 npx tsx scripts/create-admin.ts admin admin@example.com Admin@12345
 ```
 
+也可以在 `.env` 里设置 `ADMIN_PASSWORD`（及可选的 `ADMIN_USERNAME` / `ADMIN_EMAIL`），再执行 `npm run db:migrate`：库里还没有站长时会自动创建；已有站长不会重置密码。
+
 ### 5. 启动
 
 ```bash
@@ -424,6 +426,11 @@ DB_POOL_SIZE=10
 
 # 站点对外地址，必须以 https:// 开头且不要带末尾斜杠
 SITE_URL=https://your-domain.com
+
+# 首次空库部署自动创建站长（已有站长时不会重置密码）
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=换成一个至少 8 位的强密码
+ADMIN_EMAIL=you@example.com
 ```
 
 `.env` 已在 `.gitignore` 中，**不要提交到仓库**。SMTP 可先留空，登录后台后再配置。
@@ -438,6 +445,10 @@ npm run db:migrate
 
 ### 5. 创建唯一站长账号
 
+空库首次部署推荐直接在 `.env` 设置 `ADMIN_USERNAME` / `ADMIN_PASSWORD` / `ADMIN_EMAIL`，`npm run db:migrate`（自动部署时也会执行）会在没有站长时自动创建，不需要再手动执行命令。
+
+也可以手动创建或重置：
+
 ```bash
 npx tsx scripts/create-admin.ts admin admin@example.com Admin@12345
 ```
@@ -445,6 +456,7 @@ npx tsx scripts/create-admin.ts admin admin@example.com Admin@12345
 - 数据库中没有用户时，这个账号会自动成为**站长（owner）**，也是唯一账号
 - 把 `admin@example.com` 换成真实邮箱（找回密码、投稿通知、SMTP 测试都要用）
 - 首次登录后立即在「个人中心 → 修改密码」改成强密码
+- 已有站长时，`.env` 里的 `ADMIN_*` 不会覆盖账号、不会重置密码；需要重置请用上面的命令
 - 不需要开放注册时，在后台「站点设置 → 公告与开关」中关闭注册
 
 ### 6. 准备上传目录
@@ -544,7 +556,7 @@ sudo certbot --nginx -d your-domain.com
 
 ### 10. 首次登录后的必做项
 
-1. 打开 `https://your-domain.com/login`，用 `admin` / `Admin@12345` 登录并**立即修改密码**
+1. 打开 `https://your-domain.com/login`，用 `.env` 里的 `ADMIN_USERNAME` / `ADMIN_PASSWORD`（或 `create-admin.ts` 设置、导入数据库里的账号）登录并**立即修改密码**
 2. 后台「站点设置 → 基础信息」确认站点名称与**站点地址**（邮件链接与 LOGO 都以它为准）
 3. 「站点设置 → 邮件（SMTP）」填写发信参数，点「发送测试邮件」确认能收到
 4. 需要第三方登录时，在「登录方式」中填写 App ID / Secret，回调地址直接复制页面给出的地址
@@ -577,6 +589,7 @@ sudo systemctl start knav
 - 在后台新增网址、文章、软件、修改设置，生产库会立即生效，不需要部署
 - 本地开发库的内容**不会**因为代码部署自动出现在生产站；需要迁移内容时用后台「数据迁移」或手动导入数据库
 - 部署不会改写 `.env`、`.deploy.env`、`public/uploads/`，也不会增删数据库里的内容。站点名称、LOGO、图标、站点地址请在后台设置
+- 空库首次部署前，可在服务器 `.env` 设置 `ADMIN_USERNAME` / `ADMIN_PASSWORD` / `ADMIN_EMAIL`，`db:migrate` 会自动创建站长；已有站长时不会重置账号或密码
 - 品牌图片允许在服务器本地替换：`public/logo.png`、`public/icon.png`、`src/app/icon.png`、`src/app/apple-icon.png`（注意不是项目根目录下的 `logo.png` / `icon.png`，根目录的文件不会被访问）。脚本会在合并前暂存你本地替换过的文件、合并后还原，自动部署不会覆盖你的替换；未替换的文件仍跟随仓库更新。想换回仓库版本时执行 `git checkout -- public/logo.png public/icon.png src/app/icon.png src/app/apple-icon.png` 再部署
 
 前置条件：

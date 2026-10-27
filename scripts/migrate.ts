@@ -1,4 +1,5 @@
 import "./load-env";
+import bcrypt from "bcryptjs";
 import mysql from "mysql2/promise";
 import fs from "node:fs";
 import path from "node:path";
@@ -30,6 +31,7 @@ async function main() {
   await conn.query(sql);
 
   await ensureColumns(conn, db);
+  await ensureOwnerFromEnv(conn);
 
   const [tables] = await conn.query(
     "SELECT table_name AS t FROM information_schema.tables WHERE table_schema = ? ORDER BY table_name",
@@ -99,6 +101,52 @@ async function ensureColumns(conn: mysql.Connection, db: string): Promise<void> 
   if (added > 0) {
     console.log(`已为 ${added} 条内容补齐分类关联`);
   }
+}
+
+/**
+ * 首次部署按 .env 创建站长：只在库里还没有 owner 时执行。
+ * 已存在的账号不会被改名、提权或重置密码。
+ */
+async function ensureOwnerFromEnv(conn: mysql.Connection): Promise<void> {
+  const password = (process.env.ADMIN_PASSWORD ?? "").trim();
+  if (!password) return;
+
+  if (password.length < 8) {
+    throw new Error("ADMIN_PASSWORD 至少 8 位");
+  }
+
+  const [owners] = await conn.query<any[]>(
+    "SELECT id FROM knav_users WHERE role = 'owner' LIMIT 1"
+  );
+  if (owners.length > 0) return;
+
+  const username = (process.env.ADMIN_USERNAME ?? "").trim() || "admin";
+  const email = (process.env.ADMIN_EMAIL ?? "").trim() || `${username}@knav.local`;
+
+  const [sameName] = await conn.query<any[]>(
+    "SELECT id FROM knav_users WHERE username = ? LIMIT 1",
+    [username]
+  );
+  if (sameName.length > 0) {
+    console.warn(`存在同名用户 ${username}，跳过自动创建站长；请修改 ADMIN_USERNAME`);
+    return;
+  }
+
+  const [sameEmail] = await conn.query<any[]>(
+    "SELECT id FROM knav_users WHERE email = ? LIMIT 1",
+    [email]
+  );
+  if (sameEmail.length > 0) {
+    console.warn(`邮箱 ${email} 已被使用，跳过自动创建站长；请修改 ADMIN_EMAIL`);
+    return;
+  }
+
+  const hash = await bcrypt.hash(password, 12);
+  await conn.query(
+    "INSERT INTO knav_users (username, email, password_hash, nickname, role, status, email_verified_at) VALUES (?,?,?,?,'owner','active',NOW())",
+    [username, email, hash, username]
+  );
+  console.log(`已按 .env 创建站长账号: ${username}`);
 }
 
 main().catch((e) => {
