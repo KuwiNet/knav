@@ -5,8 +5,7 @@ import zlib from "node:zlib";
  *
  * 很多站只肯给一份「数据库备份文件」，不给开数据库端口，所以这里直接吃文件：
  *   - 支持 .sql、.sql.gz/.zip/.tar/.tar.gz（压缩包里的每个 .sql 都读一遍）
- *   - 只解析 WordPress / OneNav 那几张表（posts / postmeta / terms /
- *     term_taxonomy / term_relationships / termmeta / options），
+ *   - 先扫一遍表名识别系统，再只解析该系统要用的那几张表；
  *     其它表（comments、统计插件的表…）扫到就跳过，不占内存
  *   - 解析出来的行全是字符串，跟 mysql2 的结果一起在 buildSnapshot 里归一化
  *
@@ -25,7 +24,7 @@ export interface DumpTable {
 /** 解压后允许的最大文本量；再大建议直连源库扫描 */
 const MAX_SQL_BYTES = 256 * 1024 * 1024;
 
-/** 只收这几张表（前缀任意） */
+/** 默认只收 WordPress 这几张表（前缀任意），其它来源由调用方传 wanted */
 const WANTED_TABLE = /_(?:posts|postmeta|terms|term_taxonomy|term_relationships|termmeta|options)$/i;
 
 /* ------------------------------------------------------------ 文件解压 */
@@ -177,6 +176,45 @@ function octal(buf: Buffer, start: number, len: number): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+/* ------------------------------------------------------------ 表名扫描 */
+
+/**
+ * 先扫一遍所有语句的表名，用来识别来源系统。
+ *
+ * 只读每段语句开头，不切整条 INSERT，几百 MB 的备份也不会因为这一步吃内存。
+ */
+export function listDumpTables(sql: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  forEachStatement(sql, (head) => {
+    const name = tableNameFromHead(head);
+    if (!name) return;
+    const key = name.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(name);
+  });
+  return out;
+}
+
+function tableNameFromHead(head: string): string | null {
+  const create =
+    /^\s*CREATE\s+(?:TEMPORARY\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s(;]+)/i.exec(head);
+  if (create) return normalizeTableRef(create[1]);
+
+  const insert =
+    /^\s*(?:INSERT|REPLACE)\s+(?:LOW_PRIORITY\s+|DELAYED\s+|HIGH_PRIORITY\s+|IGNORE\s+)*INTO\s+([^\s(;]+)/i.exec(
+      head
+    );
+  if (insert) return normalizeTableRef(insert[1]);
+  return null;
+}
+
+/** `db`.`wp_posts` / `wp_posts` / [wp_posts] → wp_posts */
+function normalizeTableRef(raw: string): string {
+  return (raw.replace(/[`"[\]]/g, "").split(".").pop() ?? "").trim();
+}
+
 /* ------------------------------------------------------------ 语句切分 */
 
 /**
@@ -279,10 +317,27 @@ function skipQuoted(sql: string, at: number): number {
 /* ------------------------------------------------------------ 语句解析 */
 
 /** 解析一条 CREATE TABLE，拿到列名顺序 */
+const CONSTRAINT_WORDS = new Set([
+  "primary",
+  "unique",
+  "key",
+  "index",
+  "constraint",
+  "foreign",
+  "fulltext",
+  "spatial",
+  "check",
+  "period",
+  "row_format",
+  "with",
+  "partition",
+]);
+
 function parseCreate(head: string, full: () => string): { table: string; columns: string[] } | null {
-  const m = /^\s*CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`"[\]]?([\w$]+)[`"[\]]?/i.exec(head);
+  const m =
+    /^\s*CREATE\s+(?:TEMPORARY\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s(;]+)/i.exec(head);
   if (!m) return null;
-  const table = m[1];
+  const table = normalizeTableRef(m[1]);
   const text = full();
   const open = text.indexOf("(", m[0].length);
   if (open < 0) return { table, columns: [] };
@@ -294,13 +349,8 @@ function parseCreate(head: string, full: () => string): { table: string; columns
     // 第一个词就是列名（约束行的是 PRIMARY / KEY / CONSTRAINT 这些）
     const name = piece.split(/[\s([]/, 1)[0].replace(/[`"]/g, "");
     if (!name) continue;
-    if (
-      /^(primary|unique|key|index|constraint|foreign|fulltext|spatial|check|period|row_format|with|partition)/i.test(
-        name
-      )
-    ) {
-      continue;
-    }
+    // 约束行以整词开头；不能用前缀匹配，否则 checked 这类列会被当成 CHECK
+    if (CONSTRAINT_WORDS.has(name.toLowerCase())) continue;
     columns.push(name);
   }
   return { table, columns };
@@ -312,11 +362,11 @@ function parseInsert(
   full: () => string
 ): { table: string; columns: string[]; valuesAt: number; text: string } | null {
   const m =
-    /^\s*(?:INSERT|REPLACE)\s+(?:LOW_PRIORITY\s+|DELAYED\s+|HIGH_PRIORITY\s+|IGNORE\s+)*INTO\s+[`"[\]]?([\w$]+)[`"[\]]?/i.exec(
+    /^\s*(?:INSERT|REPLACE)\s+(?:LOW_PRIORITY\s+|DELAYED\s+|HIGH_PRIORITY\s+|IGNORE\s+)*INTO\s+([^\s(;]+)/i.exec(
       head
     );
   if (!m) return null;
-  const table = m[1];
+  const table = normalizeTableRef(m[1]);
   const text = full();
   let p = m[0].length;
 
@@ -507,17 +557,21 @@ function splitTop(text: string, sep: string): string[] {
  *
  * 同一个备份里可能有多套前缀（wp_ 与 wp_旧站_），前缀选择交给调用方。
  */
-export function parseSqlDump(sql: string): Map<string, DumpTable> {
+export function parseSqlDump(
+  sql: string,
+  opts: { wanted?: (table: string) => boolean } = {}
+): Map<string, DumpTable> {
   const tables = new Map<string, DumpTable>();
+  const wanted = opts.wanted ?? ((t: string) => WANTED_TABLE.test(t));
 
   forEachStatement(sql, (head, slice) => {
-    const isCreate = /^\s*CREATE\s+TABLE/i.test(head);
+    const isCreate = /^\s*CREATE\s+(?:TEMPORARY\s+)?TABLE/i.test(head);
     const isInsert = /^\s*(?:INSERT|REPLACE)\s/i.test(head);
     if (!isCreate && !isInsert) return;
 
     if (isCreate) {
       const c = parseCreate(head, slice);
-      if (!c || !WANTED_TABLE.test(c.table)) return;
+      if (!c || !wanted(c.table)) return;
       if (!tables.has(c.table)) {
         tables.set(c.table, { name: c.table, columns: c.columns, rows: [], skipped: 0 });
       } else if (c.columns.length > 0) {
@@ -528,7 +582,7 @@ export function parseSqlDump(sql: string): Map<string, DumpTable> {
     }
 
     const ins = parseInsert(head, slice);
-    if (!ins || !WANTED_TABLE.test(ins.table)) return;
+    if (!ins || !wanted(ins.table)) return;
     let hit = tables.get(ins.table);
     if (!hit) {
       hit = { name: ins.table, columns: ins.columns, rows: [], skipped: 0 };

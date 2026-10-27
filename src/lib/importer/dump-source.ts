@@ -1,17 +1,23 @@
-import { extractSqlText, parseSqlDump, type DumpTable } from "./sql-dump";
+import { buildSnapshotFromTables } from "./adapters";
+import { extractSqlText, listDumpTables, parseSqlDump, type DumpTable } from "./sql-dump";
+import {
+  detectSourceSystem,
+  SYSTEM_LABEL,
+  unsupportedSourceMessage,
+  wantedTables,
+} from "./systems";
 import { buildSnapshot, type WpDataset, type WpRow } from "./wordpress";
 import type { ImportSnapshot } from "./types";
 
 /**
  * 本地 MySQL 备份文件 → 导入快照。
  *
- * 备份文件里的表名带各种前缀（wp_、onenav_、site2022_），
- * 也可能一次打包了好几套（分库导出），所以先把 WordPress 那几张表收齐，
- * 再挑出内容最多的那套前缀拼成 WpDataset，跟直连源库走同一个映射。
+ * 先只扫表名识别系统（knav / WordPress / Typecho / Z-BlogPHP / Emlog / Halo /
+ * 通用 links 导航库），再按该系统需要的表做第二遍解析。
+ * WordPress 可能一个备份里有多套前缀（wp_ 与 wp_旧站_），仍按内容最多的那套走。
  */
 
-/** 逻辑表名 → WordPress 里的表名后缀 */
-const SUFIXES = {
+const WP_SUFFIXES = {
   posts: "posts",
   postmeta: "postmeta",
   terms: "terms",
@@ -21,12 +27,43 @@ const SUFIXES = {
   options: "options",
 } as const;
 
-export function scanSqlDumpFile(buf: Buffer, filename: string): ImportSnapshot {
+export function scanSqlDumpFile(
+  buf: Buffer,
+  filename: string,
+  opts: { tablePrefix?: string } = {}
+): ImportSnapshot {
   const files = extractSqlText(buf, filename);
 
+  const names: string[] = [];
+  const seen = new Set<string>();
+  for (const f of files) {
+    for (const name of listDumpTables(f.sql)) {
+      const key = name.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      names.push(name);
+    }
+  }
+
+  const det = detectSourceSystem(names, opts.tablePrefix ?? "");
+
+  if (det.system === "halo2") {
+    throw new Error(
+      "检测到 Halo 2.x 的 extensions 表。Halo 2.x 把内容存成 JSON，暂不支持直接导入，请先在 Halo 后台导出 Markdown / 备份后再迁移。"
+    );
+  }
+  if (det.system === "unknown") {
+    throw new Error(unsupportedSourceMessage(names));
+  }
+
+  if (det.system === "wordpress") {
+    return scanWordPressDump(files, filename, det.prefix);
+  }
+
+  const wanted = new Set(wantedTables(det, names).map((n) => n.toLowerCase()));
   const tables = new Map<string, DumpTable>();
   for (const f of files) {
-    for (const [name, t] of parseSqlDump(f.sql)) {
+    for (const [name, t] of parseSqlDump(f.sql, { wanted: (n) => wanted.has(n.toLowerCase()) })) {
       const hit = tables.get(name);
       if (!hit) {
         tables.set(name, t);
@@ -38,48 +75,95 @@ export function scanSqlDumpFile(buf: Buffer, filename: string): ImportSnapshot {
     }
   }
 
-  const prefix = pickPrefix(tables);
+  const snapshot = buildSnapshotFromTables(det, tables, { sourceLabel: filename });
+  if (snapshot.contents.length === 0) {
+    throw new Error(
+      `认出来是 ${SYSTEM_LABEL[det.system]}，但没有读到可导入的内容。` +
+        explainSkipped(tables)
+    );
+  }
+  return snapshot;
+}
+
+/** WordPress 备份：保留「多套前缀里挑内容最多」的老行为 */
+function scanWordPressDump(
+  files: { name: string; sql: string }[],
+  filename: string,
+  detectedPrefix: string
+): ImportSnapshot {
+  const tables = new Map<string, DumpTable>();
+  const wpWanted = (name: string) => {
+    const n = name.toLowerCase();
+    if (/_(posts|postmeta|terms|term_taxonomy|term_relationships|termmeta|options)$/.test(n)) {
+      return true;
+    }
+    return /^(posts|postmeta|terms|term_taxonomy|term_relationships|termmeta|options)$/.test(n);
+  };
+
+  for (const f of files) {
+    for (const [name, t] of parseSqlDump(f.sql, { wanted: wpWanted })) {
+      const hit = tables.get(name);
+      if (!hit) {
+        tables.set(name, t);
+        continue;
+      }
+      hit.rows.push(...t.rows);
+      hit.skipped += t.skipped;
+      if (hit.columns.length === 0) hit.columns = t.columns;
+    }
+  }
+
+  const prefix = pickPrefix(tables, detectedPrefix);
   const of = (suffix: string): WpRow[] =>
     (tables.get(`${prefix}${suffix}`)?.rows ?? []) as WpRow[];
 
-  const posts = of(SUFIXES.posts);
-  const postsTable = tables.get(`${prefix}${SUFIXES.posts}`);
+  const posts = of(WP_SUFFIXES.posts);
+  const postsTable = tables.get(`${prefix}${WP_SUFFIXES.posts}`);
   if (posts.length === 0) {
-    const parsed = [...tables.keys()];
     if (postsTable && postsTable.skipped > 0) {
       throw new Error(
         `读到了 ${prefix}posts 的 INSERT 语句，但 ${postsTable.skipped} 组值的列数对不上，解析不出来`
       );
     }
     throw new Error(
-      parsed.length === 0
-        ? "备份文件里没找到 WordPress/OneNav 的表（posts / terms 这些），确认导出了数据库内容"
-        : `备份里读到了 ${parsed.length} 张表（如 ${parsed.slice(0, 3).join("、")}），但没有可用的 *_posts 数据`
+      `备份里认出了 WordPress 的表，但没有找到 ${prefix}posts 的内容行。` +
+        explainSkipped(tables)
     );
   }
 
   const dataset: WpDataset = {
     prefix,
     posts,
-    postmeta: of(SUFIXES.postmeta),
-    terms: of(SUFIXES.terms),
-    termTaxonomy: of(SUFIXES.termTaxonomy),
-    termRelationships: of(SUFIXES.termRelationships),
-    termMeta: of(SUFIXES.termMeta),
-    options: of(SUFIXES.options),
+    postmeta: of(WP_SUFFIXES.postmeta),
+    terms: of(WP_SUFFIXES.terms),
+    termTaxonomy: of(WP_SUFFIXES.termTaxonomy),
+    termRelationships: of(WP_SUFFIXES.termRelationships),
+    termMeta: of(WP_SUFFIXES.termMeta),
+    options: of(WP_SUFFIXES.options),
   };
 
   return buildSnapshot(dataset, { sourceLabel: filename });
 }
 
-/** 挑内容最多的那套表前缀（并列时取名字短的，跟直连探测的规则一致） */
-function pickPrefix(tables: Map<string, DumpTable>): string {
+/** 多套前缀时挑 posts 行数最多的；并列取探测结果 / 名字短的 */
+function pickPrefix(tables: Map<string, DumpTable>, detected: string): string {
   const candidates: { prefix: string; count: number }[] = [];
   for (const [name, t] of tables) {
-    if (!/_posts$/i.test(name)) continue;
+    if (!/posts$/i.test(name)) continue;
     candidates.push({ prefix: name.replace(/posts$/i, ""), count: t.rows.length });
   }
-  if (candidates.length === 0) return "wp_";
-  candidates.sort((a, b) => b.count - a.count || a.prefix.length - b.prefix.length);
+  if (candidates.length === 0) return detected || "wp_";
+  candidates.sort(
+    (a, b) =>
+      b.count - a.count ||
+      (a.prefix === detected ? -1 : b.prefix === detected ? 1 : 0) ||
+      a.prefix.length - b.prefix.length
+  );
   return candidates[0].prefix;
+}
+
+function explainSkipped(tables: Map<string, DumpTable>): string {
+  const skipped = [...tables.values()].filter((t) => t.skipped > 0);
+  if (skipped.length === 0) return "";
+  return `（有 ${skipped.reduce((n, t) => n + t.skipped, 0)} 组值的列数对不上，可能是备份不完整）`;
 }

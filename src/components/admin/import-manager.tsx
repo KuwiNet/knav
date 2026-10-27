@@ -235,7 +235,8 @@ export default function ImportManager({
               </label>
             </div>
             <div className="hint">
-              连接信息只在本次扫描时使用，不会存进本站数据库。表前缀留空会自动探测。
+              连接信息只在本次扫描时使用，不会存进本站数据库。会自动识别 knav、WordPress /
+              OneNav、Typecho、Z-BlogPHP、Emlog、Halo 1.x 和通用 links 导航库；表前缀留空自动探测。
             </div>
             <div>
               <ScanButton />
@@ -256,7 +257,8 @@ export default function ImportManager({
             <div className="hint">
               支持 mysqldump / phpMyAdmin / Navicat 导出的 .sql，以及 .sql.gz、.zip、.tar.gz
               压缩包（单个文件不超过 64MB）。只读取文件里的建表与插入语句，不会执行备份里的任何
-              SQL；导出的表要含 WordPress 的 posts / terms 那几张。
+              SQL。自动识别 knav、WordPress / OneNav、Typecho、Z-BlogPHP、Emlog、Halo 1.x
+              和通用 links 导航库。
             </div>
             <div>
               <ScanButton />
@@ -295,6 +297,13 @@ export default function ImportManager({
               第二步：勾选要导入的内容
             </h2>
 
+            <div className="row" style={{ gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+              <span className="badge badge-accent">
+                识别为 {scan.sourceSystemLabel}
+              </span>
+              <span className="text-sm text-muted">{scan.sourceLabel}</span>
+            </div>
+
             <div className="stat-grid" style={{ marginBottom: 12 }}>
               <div className="stat">
                 <div className="stat-label">分类</div>
@@ -316,7 +325,9 @@ export default function ImportManager({
 
             {scan.sourceSiteUrl ? (
               <div className="hint" style={{ marginBottom: 12 }}>
-                来源站地址：{scan.sourceSiteUrl}，图标与正文里的相对路径已按它补成绝对地址。
+                {scan.sourceSystem === "knav"
+                  ? `来源站地址：${scan.sourceSiteUrl}。图标与正文里的 /uploads 相对路径保持原样，记得把来源站的 uploads 素材一起复制到本站。`
+                  : `来源站地址：${scan.sourceSiteUrl}，图标与正文里的相对路径已按它补成绝对地址。`}
               </div>
             ) : null}
 

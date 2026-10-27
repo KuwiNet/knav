@@ -5,10 +5,11 @@ import { getCurrentUser, isAdmin } from "@/lib/auth";
 import { createExternalPool, execute, query } from "@/lib/db";
 import { logAction } from "@/lib/admin-log";
 import { putSnapshot, getSnapshot } from "@/lib/importer/cache";
-import { scanWordPress } from "@/lib/importer/wordpress";
+import { scanDatabase } from "@/lib/importer/mysql-source";
 import { scanSqlDumpFile } from "@/lib/importer/dump-source";
 import { parseWxr } from "@/lib/importer/wxr";
 import { runImport } from "@/lib/importer/run";
+import { SYSTEM_LABEL } from "@/lib/importer/systems";
 import type { ImportScanResult, ImportSnapshot } from "@/lib/importer/types";
 
 /**
@@ -31,6 +32,7 @@ export async function scanImportAction(
   await requireAdmin();
 
   const sourceType = String(fd.get("sourceType") ?? "mysql");
+  const prefixHint = String(fd.get("tablePrefix") ?? "").trim();
   let snapshot: ImportSnapshot;
   let sourceLabel = "";
 
@@ -57,14 +59,13 @@ export async function scanImportAction(
       if (buf.length === 0) return { ok: false, error: "文件是空的" };
       sourceLabel = (file as File).name || "backup.sql";
       // 只读文件里的 CREATE / INSERT 语句，不会执行备份里的任何 SQL
-      snapshot = scanSqlDumpFile(buf, sourceLabel);
+      snapshot = scanSqlDumpFile(buf, sourceLabel, { tablePrefix: prefixHint });
     } else {
       const host = String(fd.get("host") ?? "").trim();
       const port = Number(fd.get("port") ?? 3306) || 3306;
       const user = String(fd.get("dbUser") ?? "").trim();
       const password = String(fd.get("dbPass") ?? "");
       const database = String(fd.get("dbName") ?? "").trim();
-      const prefixHint = String(fd.get("tablePrefix") ?? "").trim();
 
       if (!host || !user || !database) {
         return { ok: false, error: "请填写数据库地址、账号和库名" };
@@ -80,8 +81,7 @@ export async function scanImportAction(
         ssl: fd.get("ssl") === "1",
       });
       try {
-        snapshot = await scanWordPress(pool, { sourceLabel });
-        if (prefixHint) snapshot.sourceLabel = `${sourceLabel} (${prefixHint})`;
+        snapshot = await scanDatabase(pool, { sourceLabel, tablePrefix: prefixHint });
       } finally {
         await pool.end();
       }
@@ -100,6 +100,8 @@ export async function scanImportAction(
   const result: ImportScanResult = {
     jobId,
     sourceType: sourceType === "wxr" || sourceType === "sql" ? sourceType : "mysql",
+    sourceSystem: snapshot.sourceSystem,
+    sourceSystemLabel: SYSTEM_LABEL[snapshot.sourceSystem],
     sourceLabel: snapshot.sourceLabel,
     sourceSiteUrl: snapshot.sourceSiteUrl,
     taxonomies: snapshot.taxonomies,

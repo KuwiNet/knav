@@ -80,8 +80,8 @@ const POST_TYPE_MAP: Record<string, ImportContentType> = {
 /** 算作「内容」的 post_type */
 export const CONTENT_POST_TYPES = Object.keys(POST_TYPE_MAP);
 
-/** 这些状态不是给用户看的内容（附件、修订、自动草稿） */
-const SKIP_POST_STATUS = ["auto-draft", "inherit", "revision"];
+/** 这些状态不是给用户看的内容（附件、修订、自动草稿、回收站） */
+const SKIP_POST_STATUS = ["auto-draft", "inherit", "revision", "trash", "spam"];
 
 /* ------------------------------------------------------------- 直连源库 */
 
@@ -167,13 +167,16 @@ async function loadDataset(pool: Pool, prefix: string): Promise<WpDataset> {
   };
 }
 
-/** 扫描直连的源库 */
+/** 扫描直连的源库（prefix 由系统探测给出，缺省时自行探测） */
 export async function scanWordPress(
   pool: Pool,
-  opts: { sourceLabel?: string } = {}
+  opts: { sourceLabel?: string; prefix?: string } = {}
 ): Promise<ImportSnapshot> {
-  const prefix = await detectPrefix(pool);
-  return buildSnapshot(await loadDataset(pool, prefix), opts);
+  // 空串是合法前缀（无前缀的 WP 表），不能当成「没传」
+  const prefix = opts.prefix !== undefined ? opts.prefix.trim() : await detectPrefix(pool);
+  return buildSnapshot(await loadDataset(pool, prefix), {
+    sourceLabel: opts.sourceLabel,
+  });
 }
 
 /* ------------------------------------------------------------ 快照映射 */
@@ -212,6 +215,7 @@ export function buildSnapshot(
   const contents = buildContents(ds, metaKeys, categories, sourceSiteUrl);
 
   return {
+    sourceSystem: "wordpress",
     sourceLabel: opts.sourceLabel ?? "",
     sourceSiteUrl,
     categories,

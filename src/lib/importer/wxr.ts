@@ -169,6 +169,7 @@ export function parseWxr(xml: string, opts: { sourceLabel?: string } = {}): Impo
   }
 
   return {
+    sourceSystem: "wordpress",
     sourceLabel: opts.sourceLabel ?? "",
     sourceSiteUrl,
     categories,

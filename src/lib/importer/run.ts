@@ -163,6 +163,22 @@ export async function runImport(
       else if (c.type === "article") stats.articles++;
       else stats.apps++;
 
+      // 多分类关联：主分类 + 来源里挂着的其他分类（只写本次导入了的分类）
+      const linkedCatIds = new Set<number>();
+      for (const srcCatId of c.categorySourceIds ?? []) {
+        const mapped = catIdMap.get(srcCatId);
+        if (mapped) linkedCatIds.add(mapped);
+      }
+      if (categoryId > 0) linkedCatIds.add(categoryId);
+      if (linkedCatIds.size > 0) {
+        const catList = [...linkedCatIds];
+        await conn.query(
+          `INSERT IGNORE INTO knav_content_categories (content_id, category_id)
+           VALUES ${catList.map(() => "(?,?)").join(",")}`,
+          catList.flatMap((cid) => [contentId, cid])
+        );
+      }
+
       // 标签
       if (selection.options.tags && c.tags.length > 0) {
         for (const raw of c.tags) {
@@ -282,8 +298,11 @@ function uniqueSlug(base: string, used: Set<string>): string {
 
 /** 来源状态 → knav 状态；返回空串表示不导入 */
 function mapStatus(status: string, publishAll: boolean): string {
+  const s = status.trim().toLowerCase();
+  // 回收站 / 垃圾内容即使勾了「草稿按已发布导入」也不要
+  if (s === "trash" || s === "spam") return "";
   if (publishAll) return "publish";
-  switch (status) {
+  switch (s) {
     case "publish":
     case "future":
       return "publish";

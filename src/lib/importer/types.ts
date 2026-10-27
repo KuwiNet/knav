@@ -11,6 +11,16 @@
 
 export type ImportContentType = "site" | "article" | "app";
 
+/** 扫描到的来源系统 */
+export type ImportSourceSystem =
+  | "wordpress"
+  | "knav"
+  | "typecho"
+  | "zblog"
+  | "emlog"
+  | "halo"
+  | "links";
+
 /** 来源库里的一个分类 */
 export interface ImportCategory {
   /** 来源库里的 term_id */
@@ -54,8 +64,10 @@ export interface ImportContent {
   contentMd: string;
   icon: string;
   cover: string;
-  /** 所属分类的 term_id */
+  /** 主分类的 term_id（列表、面包屑用） */
   categorySourceId: number;
+  /** 完整分类集合；不填则只导入主分类 */
+  categorySourceIds?: number[];
   tags: string[];
   views: number;
   likes: number;
@@ -71,6 +83,8 @@ export interface ImportContent {
 
 /** 一次扫描的结果 */
 export interface ImportSnapshot {
+  /** 识别出的来源系统 */
+  sourceSystem: ImportSourceSystem;
   /** 来源站点名（后台「站点名称」或库名） */
   sourceLabel: string;
   /**
@@ -124,6 +138,8 @@ export interface ImportScanResult {
   /** 本次扫描的凭据，执行导入时凭它取回快照 */
   jobId: string;
   sourceType: "mysql" | "wxr" | "sql";
+  sourceSystem: ImportSourceSystem;
+  sourceSystemLabel: string;
   sourceLabel: string;
   /** 从来源库里读到的站点地址，用来补全相对素材路径 */
   sourceSiteUrl: string;

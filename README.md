@@ -5,7 +5,7 @@ knav 是一个基于 Next.js 15 与 MySQL 8 的导航站 / 资源分享站点系
 - **统一展示**：同一个分类下的网址与文章混排，卡片外观完全一致，只有操作按钮不同（网址 → `直达 ↗`，文章 → `阅读 →`）
 - **软件下载**：按「软件 → 平台版本 → 镜像链接」三层维护，支持多平台、多架构与多个下载入口
 - **完整账号体系**：邮箱注册验证、找回密码、站内通知、收藏，以及 Telegram / GitHub / Gitee / Google 第三方登录
-- **独立数据表结构**：使用 `knav_*` 表存储数据；可从 WordPress 数据结构的站点一次性导入存量内容
+- **独立数据表结构**：使用 `knav_*` 表存储数据；可从 knav、WordPress / OneNav、Typecho、Z-BlogPHP、Emlog、Halo 1.x 及常见导航站的数据库一次性导入存量内容
 - **空仓库起步**：仓库只包含源码与默认静态资源（LOGO、内置头像），**不包含数据库数据与上传文件**；`public/uploads/` 为空且已排除，按「部署」一节初始化后是一个空站，只有创建的站长账号
 
 ---
@@ -166,18 +166,24 @@ knav 使用独立的 `knav_*` 表结构。
 
 ## 数据迁移
 
-后台「数据迁移」页用于把**已有 WordPress 数据结构的站点**迁移到 knav。支持的系统与范围：
+后台「数据迁移」页用于把已有站点的数据库迁移到 knav。扫描时会自动识别来源系统，支持：
 
 | 来源系统 | 支持内容 |
 |---|---|
+| **knav 自有数据库** | 分类、网址、文章、软件及平台版本 / 镜像、标签、多分类关系、浏览量等完整字段 |
 | **WordPress + OneNav**（v5.x 等） | 网址、文章、软件（含 `app_down_list` 中的多平台版本与下载地址）、分类、标签、图标、浏览量等；OneNav 私有字段自动识别 |
 | **WordPress + WebStack** 及同类导航主题 / 插件 | WordPress 标准数据（网址类自定义内容、文章、分类、标签、图标）；主题私有字段按常见 postmeta 键名兜底识别 |
 | **普通 WordPress 站点** | 文章（`post` / `article`）、分类、标签等标准内容 |
+| **Typecho** | 文章、独立页面、分类、标签、自定义字段、友情链接 |
+| **Z-BlogPHP** | 文章、页面、分类、标签、友情链接 |
+| **Emlog** | 文章、分类、标签、友情链接 |
+| **Halo 1.x** | 已发布文章、独立页面、分类、标签、友情链接 |
+| **通用导航站** | 库里有 `links` / `sites` 等网址表（含常见收藏、书签程序）时，按网址与分类导入 |
 
-只要数据存放在 WordPress 常用表中（`*_posts`、`*_postmeta`、`*_terms`、`*_term_taxonomy`、
-`*_term_relationships`、`*_termmeta`、`*_options`），表前缀会自动探测（`wp_` 或自定义前缀），
-无需修改表名。**非 WordPress 数据结构的程序（如 Typecho、Z-Blog、Emlog 等）暂不支持**，
-需要先转换或导出为下列任一格式。
+WordPress 系（`*_posts`、`*_postmeta`、`*_terms`、`*_term_taxonomy`、`*_term_relationships`、
+`*_termmeta`、`*_options`）与 Typecho、Z-BlogPHP、Emlog 的表前缀都会自动探测，
+也可以在扫描时手动填写前缀。Halo 2.x 把内容存成 JSON，暂不支持直接导入，
+请先导出 Markdown 或 Halo 1.x 备份。
 
 ### 三种导入来源
 
@@ -210,9 +216,19 @@ knav 使用独立的 `knav_*` 表结构。
 types.ts        导入相关的公共类型
 common.ts       平台名 / 架构归一、镜像名推断、PHP 序列化内容解析
 meta-keys.ts    meta 键名探测（直连与备份文件共用）
-wordpress.ts    MySQL 源库取数 + 快照映射（WordPress / OneNav / WebStack）
+systems.ts      表名扫描、来源系统识别、各系统需要的表清单
+tables.ts       宽松取列、时间与选项归一
+adapters.ts     按系统分发到各自的快照构建器
+knav.ts         knav 自有数据库 → 快照
+wordpress.ts    WordPress / OneNav / WebStack → 快照
+typecho.ts      Typecho → 快照
+zblog.ts        Z-BlogPHP → 快照
+emlog.ts        Emlog → 快照
+halo.ts         Halo 1.x → 快照
+links.ts        通用 links / sites 导航库 → 快照
 sql-dump.ts     备份文件解压与 SQL 文本解析
 dump-source.ts  备份文件 → 导入快照
+mysql-source.ts 直连 MySQL 源库 → 导入快照
 wxr.ts          WXR 文件解析
 cache.ts        扫描结果缓存
 run.ts          写入 knav_* 表
@@ -710,9 +726,9 @@ sudo systemctl restart knav
 - 自动部署为可选功能：配置 GitHub Actions 或 1Panel 计划任务后生效；未配置时按「11. 升级」手动发布
 - 自动部署只同步代码；生产内容以生产数据库为准，本地开发库不会自动同步到生产
 - 第三方登录需要自行申请凭据并在后台填写后才能启用
-- 数据迁移只支持 WordPress 数据结构（OneNav / WebStack / 普通 WordPress）；
-  Typecho、Z-Blog、Emlog 等其它程序需先转换为 MySQL 备份或 WXR 格式；
-  备份文件解压后超过 256MB 请改用直连扫描
+- 数据迁移支持 knav 自有库、WordPress / OneNav / WebStack、Typecho、Z-BlogPHP、Emlog、
+  Halo 1.x，以及带 `links` / `sites` 表的通用导航库；Halo 2.x 与其它未列出的程序需先导出为
+  MySQL 备份或 WXR 格式；备份文件解压后超过 256MB 请改用直连扫描
 - WXR 导入不包含分类层级与下载镜像；软件的版本与主地址可导入，镜像需要后续补充
 - 首页热门搜索代理百度实时热榜（服务端 10 分钟缓存）；接口不可用时自动回退到站内浏览量榜
 - 搜索历史仅保存在浏览器 `localStorage`，不建表、不跨设备
