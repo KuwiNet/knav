@@ -655,6 +655,7 @@ export const SETTINGS_FIELDS: SettingField[] = [
     type: "password",
     group: "login",
     default: "",
+    hint: "从 @BotFather 获取，仅用于服务端校验登录签名",
   },
   {
     key: "telegram_bot_name",
@@ -662,6 +663,7 @@ export const SETTINGS_FIELDS: SettingField[] = [
     type: "text",
     group: "login",
     default: "",
+    hint: "填 Bot 用户名（不带 @）；还需在 @BotFather 用 /setdomain 把本站域名设为该 Bot 的登录域名",
   },
   {
     key: "login_github",

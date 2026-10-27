@@ -1715,6 +1715,17 @@ select {
   border: 0;
 }
 
+.social-tg-login {
+  margin-top: 12px;
+  min-height: 40px;
+}
+
+.social-tg-hint {
+  margin-top: 6px;
+  text-align: center;
+  font-size: 12px;
+}
+
 /* ---------------------------------------------------------------- 后台 */
 .admin-layout {
   display: grid;

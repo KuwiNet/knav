@@ -91,9 +91,25 @@ export async function redirectUri(
   req: Request,
   provider: OAuthProvider
 ): Promise<string> {
-  const site = normalizeOrigin(await getSetting("site_url"));
-  const base = site || new URL(req.url).origin;
+  const base = await siteBase(req);
   return `${base}/api/auth/${provider}/callback`;
+}
+
+/**
+ * 跳转用的绝对地址同样以站点地址为准。
+ *
+ * 生产环境前面有反向代理，req.url 可能被还原成 http(s)://localhost:3000，
+ * 授权成功跳回本站时会落到用户打不开的内网地址，所以不能直接拼 req.url。
+ */
+async function siteBase(req: Request): Promise<string> {
+  return normalizeOrigin(await getSetting("site_url")) || new URL(req.url).origin;
+}
+
+/** 站点地址带子目录时，站内跳转也要带上同一前缀 */
+function appUrl(base: string, path: string): URL {
+  const u = new URL(base);
+  const prefix = u.pathname.replace(/\/+$/, "");
+  return new URL(`${u.origin}${prefix}${path.startsWith("/") ? path : `/${path}`}`);
 }
 
 /** 跳来源授权页（同时写入 state Cookie 防 CSRF） */
@@ -105,19 +121,20 @@ export async function startOAuth(
   const flag = `login_${provider}`;
   const intent =
     new URL(req.url).searchParams.get("intent") === "bind" ? "bind" : "login";
+  const base = await siteBase(req);
 
   const fail = (reason: string) =>
     NextResponse.redirect(
-      new URL(
+      appUrl(
+        base,
         intent === "bind"
           ? `/dashboard/profile?social_error=${encodeURIComponent(reason)}`
-          : `/login?err=${provider}_${reason}`,
-        req.url
+          : `/login?err=${provider}_${reason}`
       )
     );
 
   if (intent === "bind" && !(await getCurrentUser())) {
-    return NextResponse.redirect(new URL("/login", req.url));
+    return NextResponse.redirect(appUrl(base, "/login"));
   }
   if ((await getSetting(flag)) !== "1") return fail("disabled");
 
@@ -170,7 +187,8 @@ export async function completeOAuth(
   jar.delete(stateCookie(provider));
   jar.delete(intentCookie(provider));
 
-  const done = (path: string) => NextResponse.redirect(new URL(path, req.url));
+  const base = await siteBase(req);
+  const done = (path: string) => NextResponse.redirect(appUrl(base, path));
   const fail = (reason: string) =>
     done(
       intent === "bind"
