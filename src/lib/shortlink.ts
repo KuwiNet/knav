@@ -127,6 +127,11 @@ export async function shortenWithYourls(
     if (shortUrl) return { ok: true, shortUrl };
   }
 
+  // 原网址本身就是本 YOURLS 的短链：不用再生成，直接用
+  if (String(data?.code ?? "") === "error:noloop") {
+    return { ok: true, shortUrl: target };
+  }
+
   const message = String(data?.message ?? data?.error ?? "").trim();
   return {
     ok: false,
