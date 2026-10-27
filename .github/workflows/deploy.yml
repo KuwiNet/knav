@@ -16,11 +16,37 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  NEXT_TELEMETRY_DISABLED: "1"
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --include=dev --no-audit --no-fund
+
+      - name: Build
+        run: npm run build
+
+      - name: Package build output
+        run: |
+          set -euo pipefail
+          test -f .next/BUILD_ID
+          # cache 只是本地增量构建缓存，运行时用不到，不传
+          tar -C .next --exclude='./cache' -czf knav-next.tar.gz .
+          ls -lh knav-next.tar.gz
+
       - name: Check deploy secrets
         id: guard
         env:
@@ -29,13 +55,13 @@ jobs:
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
         run: |
           if [ -z "$DEPLOY_HOST" ] || [ -z "$DEPLOY_USER" ] || [ -z "$DEPLOY_SSH_KEY" ]; then
-            echo "::warning::未配置 DEPLOY_HOST / DEPLOY_USER / DEPLOY_SSH_KEY，跳过自动部署"
+            echo "::warning::未配置 DEPLOY_HOST / DEPLOY_USER / DEPLOY_SSH_KEY，本次只构建不部署"
             echo "enabled=false" >> "$GITHUB_OUTPUT"
           else
             echo "enabled=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Deploy over SSH
+      - name: Upload artifact and deploy
         if: steps.guard.outputs.enabled == 'true'
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
@@ -57,13 +83,21 @@ jobs:
           fi
           chmod 600 "$HOME/.ssh/known_hosts"
 
+          ssh_opts=(
+            -p "$DEPLOY_PORT"
+            -i "$HOME/.ssh/knav_deploy"
+            -o IdentitiesOnly=yes
+            -o BatchMode=yes
+            -o StrictHostKeyChecking=yes
+            -o ConnectTimeout=15
+            -o ServerAliveInterval=30
+            -o ServerAliveCountMax=10
+          )
           remote_dir=$(printf '%q' "$DEPLOY_PATH")
-          ssh -p "$DEPLOY_PORT" -i "$HOME/.ssh/knav_deploy" \
-            -o IdentitiesOnly=yes \
-            -o BatchMode=yes \
-            -o StrictHostKeyChecking=yes \
-            -o ConnectTimeout=15 \
-            -o ServerAliveInterval=30 \
-            -o ServerAliveCountMax=10 \
-            "$DEPLOY_USER@$DEPLOY_HOST" \
-            "cd $remote_dir && bash scripts/deploy.sh"
+
+          echo "上传构建产物到 $DEPLOY_HOST:$DEPLOY_PATH"
+          cat knav-next.tar.gz | ssh "${ssh_opts[@]}" "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cat > $remote_dir/.next-incoming.tar.gz"
+
+          ssh "${ssh_opts[@]}" "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cd $remote_dir && DEPLOY_SHA='$GITHUB_SHA' bash scripts/deploy.sh --artifact"

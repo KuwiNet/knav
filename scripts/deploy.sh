@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
-# knav 生产部署：拉取代码 -> 安装依赖 -> 同步表结构 -> 构建 -> 替换产物 -> 重启 -> 健康检查
-# 用法：bash scripts/deploy.sh [--if-changed]
+# knav 生产部署：拉取代码 -> 安装依赖 -> 同步表结构 -> 构建/接收产物 -> 替换 -> 重启 -> 健康检查
+# 用法：bash scripts/deploy.sh [--if-changed] [--artifact]
+#   --artifact  使用工作流上传的 .next-incoming.tar.gz，不在服务器构建
 set -Eeuo pipefail
 
 IF_CHANGED=0
+ARTIFACT=0
 for arg in "$@"; do
   case "$arg" in
     --if-changed) IF_CHANGED=1 ;;
+    --artifact) ARTIFACT=1 ;;
     -h|--help)
-      echo "用法: bash scripts/deploy.sh [--if-changed]"
+      echo "用法: bash scripts/deploy.sh [--if-changed] [--artifact]"
       exit 0
       ;;
     *)
@@ -32,6 +35,7 @@ fi
 BRANCH="${BRANCH:-main}"
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:3000/api/health}"
 NEXT_DIST_DIR="${NEXT_DIST_DIR:-.next-build}"
+ARTIFACT_FILE="${ARTIFACT_FILE:-$APP_DIR/.next-incoming.tar.gz}"
 
 log() { printf '[%s] %s\n' "$(date '+%F %T')" "$*"; }
 fail() { log "失败: $*"; exit 1; }
@@ -165,13 +169,24 @@ export GIT_TERMINAL_PROMPT=0
 log "拉取 origin/$BRANCH"
 git fetch --prune origin "$BRANCH"
 
-TARGET=$(git rev-parse "origin/$BRANCH")
+if [ -n "${DEPLOY_SHA:-}" ]; then
+  if ! git cat-file -e "$DEPLOY_SHA^{commit}" 2>/dev/null; then
+    git fetch origin "$DEPLOY_SHA"
+  fi
+  TARGET=$(git rev-parse "$DEPLOY_SHA^{commit}")
+else
+  TARGET=$(git rev-parse "origin/$BRANCH")
+fi
 CURRENT=$(git rev-parse HEAD)
 DEPLOYED=$(cat "$APP_DIR/.deploy-ok" 2>/dev/null || true)
 
 if [ "$IF_CHANGED" -eq 1 ] && [ "$CURRENT" = "$TARGET" ] && [ "$DEPLOYED" = "$TARGET" ]; then
   log "已是最新版本（${CURRENT:0:7}），无需部署"
   exit 0
+fi
+
+if [ "$ARTIFACT" -eq 1 ]; then
+  [ -s "$ARTIFACT_FILE" ] || fail "缺少构建产物 $ARTIFACT_FILE；请确认工作流已上传"
 fi
 
 OTHER_CHANGES=$(git status --porcelain --untracked-files=no |
@@ -185,41 +200,70 @@ git merge --ff-only "$TARGET"
 restore_brand
 log "当前版本: $(git log --oneline -1)"
 
-rm -rf "$APP_DIR/$NEXT_DIST_DIR"
-BUILD_STARTED=1
-
-if [ -n "$CONTAINER_NAME" ]; then
-  log "检测到运行容器 $CONTAINER_NAME（$CONTAINER_WORKDIR），在容器内构建"
-
-  log "安装依赖"
-  docker exec -w "$CONTAINER_WORKDIR" "$CONTAINER_NAME" npm ci --include=dev --no-audit --no-fund
-
-  log "同步数据库结构"
-  docker exec -w "$CONTAINER_WORKDIR" "$CONTAINER_NAME" npm run db:migrate
-
-  log "构建到 $NEXT_DIST_DIR"
-  docker exec -w "$CONTAINER_WORKDIR" -e "NEXT_DIST_DIR=$NEXT_DIST_DIR" "$CONTAINER_NAME" npm run build
-else
+if [ -z "$CONTAINER_NAME" ]; then
   setup_node
   command -v npm >/dev/null 2>&1 || fail "未找到 npm"
+fi
 
+install_deps() {
+  local lock_hash stamp="$APP_DIR/.deps-lock"
+  lock_hash=$(sha256sum "$APP_DIR/package-lock.json" | awk '{print $1}')
+  if [ -d "$APP_DIR/node_modules" ] && [ "$(cat "$stamp" 2>/dev/null || true)" = "$lock_hash" ]; then
+    log "依赖未变化，跳过 npm ci"
+    return 0
+  fi
   log "安装依赖"
-  npm ci --include=dev --no-audit --no-fund
+  if [ -n "$CONTAINER_NAME" ]; then
+    docker exec -w "$CONTAINER_WORKDIR" "$CONTAINER_NAME" npm ci --include=dev --no-audit --no-fund
+  else
+    npm ci --include=dev --no-audit --no-fund
+  fi
+  printf '%s\n' "$lock_hash" > "$stamp"
+}
 
-  log "同步数据库结构"
+install_deps
+
+log "同步数据库结构"
+if [ -n "$CONTAINER_NAME" ]; then
+  docker exec -w "$CONTAINER_WORKDIR" "$CONTAINER_NAME" npm run db:migrate
+else
   npm run db:migrate
+fi
+
+if [ "$ARTIFACT" -eq 1 ]; then
+  log "解压构建产物 $ARTIFACT_FILE"
+  ARTIFACT_STAGE="$APP_DIR/.next-incoming"
+  rm -rf "$ARTIFACT_STAGE"
+  mkdir -p "$ARTIFACT_STAGE"
+  tar -xzf "$ARTIFACT_FILE" -C "$ARTIFACT_STAGE"
+  [ -f "$ARTIFACT_STAGE/BUILD_ID" ] || fail "构建产物缺少 BUILD_ID，拒绝替换"
+
+  rm -rf "$APP_DIR/.next.prev"
+  if [ -d "$APP_DIR/.next" ]; then
+    mv "$APP_DIR/.next" "$APP_DIR/.next.prev"
+  fi
+  mv "$ARTIFACT_STAGE" "$APP_DIR/.next"
+  rm -f "$ARTIFACT_FILE"
+  log "构建产物已替换 $APP_DIR/.next"
+else
+  rm -rf "$APP_DIR/$NEXT_DIST_DIR"
+  BUILD_STARTED=1
 
   log "构建到 $NEXT_DIST_DIR"
-  NEXT_DIST_DIR="$NEXT_DIST_DIR" npm run build
-fi
+  if [ -n "$CONTAINER_NAME" ]; then
+    docker exec -w "$CONTAINER_WORKDIR" -e "NEXT_DIST_DIR=$NEXT_DIST_DIR" "$CONTAINER_NAME" npm run build
+  else
+    NEXT_DIST_DIR="$NEXT_DIST_DIR" npm run build
+  fi
 
-[ -d "$APP_DIR/$NEXT_DIST_DIR" ] || fail "构建目录 $NEXT_DIST_DIR 不存在"
+  [ -d "$APP_DIR/$NEXT_DIST_DIR" ] || fail "构建目录 $NEXT_DIST_DIR 不存在"
 
-rm -rf "$APP_DIR/.next.prev"
-if [ -d "$APP_DIR/.next" ]; then
-  mv "$APP_DIR/.next" "$APP_DIR/.next.prev"
+  rm -rf "$APP_DIR/.next.prev"
+  if [ -d "$APP_DIR/.next" ]; then
+    mv "$APP_DIR/.next" "$APP_DIR/.next.prev"
+  fi
+  mv "$APP_DIR/$NEXT_DIST_DIR" "$APP_DIR/.next"
 fi
-mv "$APP_DIR/$NEXT_DIST_DIR" "$APP_DIR/.next"
 
 if [ -z "$CONTAINER_NAME" ]; then
   APP_OWNER="${APP_OWNER:-$(stat -c '%U' "$APP_DIR/public/uploads" 2>/dev/null || true)}"

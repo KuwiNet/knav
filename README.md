@@ -258,13 +258,13 @@ db/
   schema.sql      knav_* 表结构
 scripts/
   migrate.ts      建表（应用 db/schema.sql）
-  deploy.sh       生产部署（拉取 / 迁移 / 构建 / 重启 / 健康检查）
+  deploy.sh       生产部署（拉取 / 依赖 / 迁移 / 接收产物 / 重启 / 健康检查）
   db-reset.ts     清空并重建数据库（需 --yes 确认）
   seed.ts         本地种子数据（会清空表，勿在生产库运行）
   create-admin.ts 创建 / 重置管理员
   db-create.ts / db-grants.ts 建库与授权
 .github/
-  workflows/deploy.yml  推送 main 后自动部署（可选）
+  workflows/deploy.yml  推送 main 后构建并部署（可选）
 public/
   avatars/        内置头像 SVG
   uploads/        素材库本地化后的文件（运行数据，不入库）
@@ -538,6 +538,9 @@ sudo certbot --nginx -d your-domain.com
 
 > **1Panel / 宝塔用户**：新建「Node 项目」指向 `/opt/knav`，启动命令 `npm start`，端口 3000，
 > 再添加反向代理并申请 SSL 即可，可跳过 systemd 与 Nginx 手写配置。
+>
+> 用 GitHub Actions 产物自动部署、且服务器上还没有 `.next` 时，首次先临时把启动命令改为
+> `sh -c "while [ ! -f .next/BUILD_ID ]; do sleep 2; done; npm start"`，等第一次部署成功后再改回 `npm start`。
 
 ### 10. 首次登录后的必做项
 
@@ -567,7 +570,7 @@ sudo systemctl start knav
 
 ### 12. 自动部署（可选）
 
-把代码推送到 GitHub 的 `main` 后，可以让服务器自动执行「拉取 → 安装依赖 → 同步表结构 → 构建 → 重启 → 健康检查」。
+把代码推送到 GitHub 的 `main` 后，由 GitHub Actions 构建，服务器只接收构建产物并执行「拉取 → 安装依赖 → 同步表结构 → 解压产物 → 重启 → 健康检查」。只有 2GB 内存、没有 swap 的小机器也能自动部署，不需要在服务器上跑 `next build`。
 
 自动部署**只同步代码**：
 
@@ -579,16 +582,11 @@ sudo systemctl start knav
 前置条件：
 
 - 服务器上的项目目录必须是 `git clone` 的仓库（用 Release 源码包解压的目录没有 `.git`，无法自动更新）
-- 服务器能访问 GitHub（执行 `git fetch`）和 npm 源
+- 服务器能访问 GitHub（执行 `git fetch`）和 npm 源（安装运行依赖）
 - 应用已经能通过 systemd、PM2 或 1Panel Node 项目正常运行
+- 服务器上的 `scripts/deploy.sh` 已是最新版本。第一次从旧部署方式切换时，先在服务器执行 `cd /opt/knav && git pull --ff-only origin main`，再到 GitHub 手动触发工作流
 
-先手动执行一次，确认部署链路可用：
-
-```bash
-cd /opt/knav && bash scripts/deploy.sh
-```
-
-脚本会先把新版本构建到 `.next-build`，成功后才替换 `.next`，旧构建保留为 `.next.prev`；构建或数据库迁移失败时不会替换线上构建。数据库迁移只补表结构，不会清空内容。
+产物部署流程：工作流在 Ubuntu 上执行 `npm ci && npm run build`，把 `.next` 打包上传；服务器的 `deploy.sh --artifact` 先解压到 `.next-incoming`，确认包含 `BUILD_ID` 后才把旧 `.next` 移为 `.next.prev` 并替换，然后重启应用。解压、迁移或健康检查失败时线上仍是旧构建。数据库迁移只补表结构，不会清空内容。
 
 #### 方式一：GitHub Actions（推送后立即部署，推荐）
 
@@ -607,7 +605,7 @@ ssh-keygen -t ed25519 -C github-actions-knav -f ~/.ssh/knav_deploy -N "" && cat 
 | 名称 | 必填 | 说明 |
 |---|---|---|
 | `DEPLOY_HOST` | 是 | 服务器 IP 或域名 |
-| `DEPLOY_USER` | 是 | SSH 用户，需要能执行构建并重启应用（通常为 `root`） |
+| `DEPLOY_USER` | 是 | SSH 用户，需要能执行 `git`、`npm` / `docker exec` 并重启应用（通常为 `root`） |
 | `DEPLOY_SSH_KEY` | 是 | 上一步输出的私钥全文 |
 | `DEPLOY_PORT` | 否 | SSH 端口，默认 `22` |
 | `DEPLOY_KNOWN_HOSTS` | 否 | `ssh-keyscan -H -p 22 <服务器IP>` 的输出，填了会校验服务器指纹 |
@@ -621,7 +619,9 @@ ssh-keygen -t ed25519 -C github-actions-knav -f ~/.ssh/knav_deploy -N "" && cat 
 - 只修改 `README`、`docs/` 或 `.github/` 不会触发部署
 - 未配置 Secrets 时工作流会跳过并给出警告，不会报失败
 
-#### 方式二：1Panel 计划任务（服务器主动轮询）
+#### 方式二：1Panel 计划任务（服务器主动轮询，服务器本地构建）
+
+> 这种方式没有 GitHub Actions 提供的产物，会在服务器上执行 `npm run build`。内存小于 4GB 时请先加 2GB swap，或只用方式一。
 
 1Panel →「计划任务」→ 新建「Shell 脚本」，执行周期设为 1–5 分钟，脚本内容：
 
@@ -636,7 +636,7 @@ cd /opt/knav && bash scripts/deploy.sh --if-changed
 脚本按以下顺序识别应用如何重启：
 
 1. `.deploy.env` 中的 `RESTART_CMD`
-2. Docker：找到挂载了项目目录的容器（1Panel 的 Node 运行环境默认就是这种），在容器内构建并用 `docker restart` 重启
+2. Docker：找到挂载了项目目录的容器（1Panel 的 Node 运行环境默认就是这种），在容器内安装依赖、迁移，并用 `docker restart` 重启
 3. systemd：`knav.service`，或 `WorkingDirectory` 指向项目目录的服务
 4. PM2：工作目录指向项目目录、或名称包含 `knav` 的进程
 
@@ -686,7 +686,7 @@ sudo systemctl restart knav
 | 登录后立刻掉线 | `SITE_URL` 与访问域名 / 协议是否一致；Nginx 是否透传 `X-Forwarded-Proto` |
 | 上传图片失败 | `public/uploads/` 是否存在、`www-data` 是否可写；`client_max_body_size` 是否足够 |
 | 邮件收不到 | 后台 SMTP 配置；查看「消息日志 → 邮件」的失败原因；云厂商常封 25 端口，改用 465 / 587 |
-| 构建内存不足 | 加 swap，或使用 `NODE_OPTIONS=--max-old-space-size=2048 npm run build` |
+| 构建内存不足 | 默认由 GitHub Actions 构建，不占用服务器内存；若用 1Panel 计划任务在服务器本地构建，先加 swap |
 | 迁移大文件失败 | 备份文件解压后超过 256MB 请改用直连扫描；同时调大 `client_max_body_size` |
 | 页面样式没更新 | 清理浏览器缓存；确认已重新执行 `npm run build` 并重启进程 |
 
