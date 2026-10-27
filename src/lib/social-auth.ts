@@ -176,7 +176,8 @@ export async function fetchGithubProfile(
 /**
  * Gitee 换 token。
  *
- * 与其它家不同：Gitee 的令牌接口要求 JSON body，返回里直接是 access_token。
+ * Gitee 的令牌接口按 OAuth2 规范收表单参数；用 JSON body 会返回
+ * authorization_code_request_invalid_grant。返回里直接是 access_token。
  */
 export async function exchangeGiteeCode(
   code: string,
@@ -187,14 +188,17 @@ export async function exchangeGiteeCode(
   try {
     const res = await fetch("https://gitee.com/oauth/token", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Accept: "application/json",
+      },
+      body: new URLSearchParams({
         grant_type: "authorization_code",
         client_id: clientId,
         client_secret: clientSecret,
         redirect_uri: redirectUri,
         code,
-      }),
+      }).toString(),
     });
     const data = (await res.json()) as {
       access_token?: string;
@@ -216,10 +220,20 @@ export async function exchangeGiteeCode(
 }
 
 /**
+ * 来源站返回的邮箱可能是「未公开邮箱」之类的占位文本，
+ * 不是合法邮箱就按空处理，避免写进绑定关系后展示出来。
+ */
+function validEmail(value: string | null | undefined): string {
+  const email = (value ?? "").trim();
+  return email && !validateEmail(email) ? email : "";
+}
+
+/**
  * 取 Gitee 用户信息。
  *
- * /user 里的 email 只在账号公开邮箱时才有值；用户把邮箱设为私密时，
- * 要再用 emails 权限单独查一次（授权 scope 见 oauth-flow.ts）。
+ * /user 里的 email 只在账号公开邮箱时才有值；用户把邮箱设为私密时
+ * 会返回「未公开邮箱」等占位文本，需要再用 emails 权限单独查一次
+ * （授权 scope 见 oauth-flow.ts）。
  */
 export async function fetchGiteeProfile(
   token: string
@@ -238,7 +252,7 @@ export async function fetchGiteeProfile(
       email?: string;
     };
 
-    let email = (u.email ?? "").trim();
+    let email = validEmail(u.email);
     let verified = false;
     if (!email) {
       try {
@@ -248,12 +262,14 @@ export async function fetchGiteeProfile(
         );
         if (er.ok) {
           const list = (await er.json()) as { email?: string; state?: string }[];
+          const usable = list.filter(
+            (e): e is { email: string; state?: string } => Boolean(validEmail(e.email))
+          );
           // 优先已确认的主邮箱
           const hit =
-            list.find((e) => e.email && e.state === "confirmed") ??
-            list.find((e) => e.email);
-          if (hit?.email) {
-            email = hit.email.trim();
+            usable.find((e) => e.state === "confirmed") ?? usable[0];
+          if (hit) {
+            email = validEmail(hit.email);
             verified = hit.state === "confirmed";
           }
         }
@@ -384,9 +400,31 @@ function toIdentity(row: IdentityRow): UserIdentity | null {
     provider: row.provider,
     providerId: row.provider_id,
     username: row.provider_username,
-    email: row.provider_email,
+    // 历史数据里可能存过「未公开邮箱」占位文本，读取时一并过滤
+    email: validEmail(row.provider_email),
     createdAt: row.created_at,
   };
+}
+
+/**
+ * 已绑定的第三方账号再次授权时，把来源侧最新的用户名 / 邮箱同步过来。
+ * 只有拿到合法邮箱才覆盖，避免一次接口异常把已有邮箱清空。
+ */
+export async function refreshIdentityProfile(
+  userId: number,
+  profile: SocialProfile
+): Promise<void> {
+  const username = (profile.username || "").trim().slice(0, 190);
+  const email = validEmail(profile.email);
+  if (!username && !email) return;
+
+  await execute(
+    `UPDATE knav_user_identities
+        SET provider_username = CASE WHEN ? <> '' THEN ? ELSE provider_username END,
+            provider_email = CASE WHEN ? <> '' THEN ? ELSE provider_email END
+      WHERE user_id = ? AND provider = ? AND provider_id = ?`,
+    [username, username, email, email, userId, profile.provider, profile.id]
+  );
 }
 
 /** 某个用户绑定的全部第三方账号 */
@@ -429,7 +467,10 @@ export async function bindIdentity(
     [profile.provider, profile.id]
   );
   if (hit) {
-    if (hit.user_id === userId) return { ok: true, already: true };
+    if (hit.user_id === userId) {
+      await refreshIdentityProfile(userId, profile);
+      return { ok: true, already: true };
+    }
     return {
       ok: false,
       error: `该 ${PROVIDER_LABEL[profile.provider]} 账号已绑定到其他用户`,
@@ -457,7 +498,7 @@ export async function bindIdentity(
         profile.provider,
         profile.id,
         (profile.username || "").slice(0, 190),
-        (profile.email || "").slice(0, 190),
+        validEmail(profile.email).slice(0, 190),
       ]
     );
   } catch (e) {
@@ -565,6 +606,10 @@ export async function loginBySocial(
   if (account.status === "banned") {
     return { ok: false, code: "banned", error: "账号已被封禁" };
   }
+
+  // 每次登录都同步来源侧资料，用户改了头像/邮箱后无需重新绑定
+  await refreshIdentityProfile(account.userId, profile);
+
   if (account.status !== "active") {
     return {
       ok: false,
@@ -772,7 +817,7 @@ export async function createSocialAccount(
           profile.provider,
           profile.id,
           (profile.username || "").slice(0, 190),
-          (profile.email || "").slice(0, 190),
+          validEmail(profile.email).slice(0, 190),
         ]
       );
       return newId;

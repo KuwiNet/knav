@@ -1711,7 +1711,7 @@ select {
   padding: 9px 8px;
   border-radius: 8px;
   border: 1px solid var(--border);
-  background: var(--bg-2);
+  background: var(--surface-2);
   color: var(--text);
   font-size: 14px;
   font-weight: 500;
@@ -1726,6 +1726,7 @@ select {
 
 .btn-social:hover {
   border-color: var(--accent);
+  background: var(--surface);
   transform: translateY(-1px);
 }
 
@@ -1744,10 +1745,6 @@ select {
     width: 14px;
     height: 14px;
   }
-}
-
-.btn-github:hover {
-  background: var(--bg-3);
 }
 
 .social-tg {
