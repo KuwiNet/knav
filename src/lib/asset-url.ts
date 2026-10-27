@@ -3,10 +3,11 @@ import { query } from "./db";
 /**
  * 素材地址解析。
  *
- * 库里存的图片/图标可能是三种形态：
+ * 库里存的图片/图标可能是四种形态：
  *   1. http(s) 绝对地址            → 原样返回
  *   2. 协议相对地址 //xxx          → 补 https
- *   3. 站内相对路径 /uploads/xx.png → 补上站点地址前缀
+ *   3. data: / blob: 内联地址      → 原样返回
+ *   4. 站内相对路径 /uploads/xx.png → 补上站点地址前缀
  *
  * 相对路径的基准只有一个：后台「站点设置 → 站点地址」。
  * 素材随站点一起部署，地址也就跟着本站走，不做多来源兜底。
@@ -57,6 +58,7 @@ export function resolveAssetUrl(
   if (!p) return "";
   if (p.startsWith("//")) return `https:${p}`;
   if (/^https?:\/\//i.test(p)) return p;
+  if (/^(data|blob):/i.test(p)) return p;
 
   const b = normalizeOrigin(base);
   if (!b) return p.startsWith("/") ? p : `/${p}`;
@@ -75,6 +77,7 @@ export function resolveAssetHref(path: string | null | undefined): string {
   if (!p) return "";
   if (p.startsWith("//")) return `https:${p}`;
   if (/^https?:\/\//i.test(p)) return p;
+  if (/^(data|blob):/i.test(p)) return p;
   return p.startsWith("/") ? p : `/${p}`;
 }
 

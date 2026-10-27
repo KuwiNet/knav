@@ -447,6 +447,7 @@ function ContentForm({
           onChange={setIcon}
           placeholder="图片地址，或直接上传"
           hint="建议方形图标；远程图片保存后会自动下载到本地"
+          letterSource={title}
         />
         {type === "article" ? (
           <AssetUploadField
