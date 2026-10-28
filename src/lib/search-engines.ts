@@ -21,7 +21,7 @@ export const SEARCH_ENGINES: SearchEngine[] = [
   { key: "baidu", label: "百度", action: "https://www.baidu.com/s", param: "wd", external: true },
   { key: "google", label: "Google", action: "https://www.google.com/search", param: "q", external: true },
   { key: "so", label: "360", action: "https://www.so.com/s", param: "q", external: true },
-  { key: "sogou", label: "搜狗", action: "https://web.sogou.com/web", param: "query", external: true },
+  { key: "sogou", label: "搜狗", action: "https://www.sogou.com/web", param: "query", external: true },
 ];
 
 export const DEFAULT_ENGINE_KEY = "site";
