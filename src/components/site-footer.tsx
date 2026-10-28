@@ -59,6 +59,17 @@ export function SiteFooter({ cfg }: { cfg: SiteConfig }) {
               </a>
             </span>
           ) : null}
+          <span>
+            {" · "}
+            Powered by{" "}
+            <a
+              href="https://github.com/KuwiNet/knav"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              knav
+            </a>
+          </span>
         </div>
         {cfg.footerNote ? (
           <div className="footer-line">{cfg.footerNote}</div>
