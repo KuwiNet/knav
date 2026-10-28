@@ -25,7 +25,7 @@ export default async function AppDetailPage({
           <div className="site-icon" style={{ width: 56, height: 56, borderRadius: 12 }}>
             {item.image ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={item.image} alt="" referrerPolicy="no-referrer" />
+              <img src={item.image} alt={`${item.title} 图标`} referrerPolicy="no-referrer" />
             ) : (
               item.title.charAt(0).toUpperCase()
             )}

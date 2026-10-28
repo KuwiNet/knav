@@ -12,10 +12,13 @@ import { useState } from "react";
 export default function CardIcon({
   src,
   letter,
+  alt,
 }: {
   src: string;
   /** 回退文字，通常是标题首字母 */
   letter: string;
+  /** 图片替代文字，缺省用首字母，避免搜索引擎判定为空 alt */
+  alt?: string;
 }) {
   const [failed, setFailed] = useState(false);
 
@@ -26,7 +29,7 @@ export default function CardIcon({
     // eslint-disable-next-line @next/next/no-img-element
     <img
       src={src}
-      alt=""
+      alt={alt || letter}
       loading="lazy"
       referrerPolicy="no-referrer"
       onError={() => setFailed(true)}

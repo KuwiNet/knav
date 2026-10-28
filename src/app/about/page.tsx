@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getSiteConfig } from "@/lib/site-config";
-import { renderMarkdownSync } from "@/lib/markdown";
+import { enhanceImages, renderMarkdownSync } from "@/lib/markdown";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +14,9 @@ export default async function AboutPage() {
 
         <div
           className="article-body"
-          dangerouslySetInnerHTML={{ __html: renderMarkdownSync(cfg.aboutContent) }}
+          dangerouslySetInnerHTML={{
+            __html: enhanceImages(renderMarkdownSync(cfg.aboutContent), "关于本站配图"),
+          }}
         />
 
         <div className="divider" />

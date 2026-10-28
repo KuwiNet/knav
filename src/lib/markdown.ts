@@ -30,10 +30,20 @@ export function sanitizeHtml(html: string): string {
  * 文章里经常有分辨率很高的截图，手机上一次性全加载会把流量和内存吃满，
  * 加上 loading="lazy" 后只有滚到可视区才请求。
  */
-export function enhanceImages(html: string): string {
+export function enhanceImages(html: string, altFallback = "文章配图"): string {
   if (!html) return "";
+  const fallback = altFallback
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;");
   return html.replace(/<img\b([^>]*)>/gi, (_m, attrs: string) => {
     let a = attrs;
+    // 缺省或为空的 alt 会让搜索引擎判定为「缺少替代文字」，用文章标题兜底
+    if (!/\balt\s*=/i.test(a)) {
+      a += ` alt="${fallback}"`;
+    } else {
+      a = a.replace(/\balt\s*=\s*(""|'')/i, `alt="${fallback}"`);
+    }
     if (!/\bloading\s*=/i.test(a)) a += ' loading="lazy"';
     if (!/\bdecoding\s*=/i.test(a)) a += ' decoding="async"';
     // 老站正文里常有写死的宽高，限制一下免得小屏被撑破

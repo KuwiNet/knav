@@ -399,10 +399,13 @@ export function slugify(s: string): string {
  * 渲染完统一套一层代码块增强（语言标签 + 复制按钮），
  * 语言标签与复制按钮是否显示由后台「代码块」设置控制。
  */
-export async function renderMarkdown(md: string): Promise<string> {
+export async function renderMarkdown(
+  md: string,
+  altFallback = "文章配图"
+): Promise<string> {
   const html = looksLikeHtml(md) ? sanitizeHtml(md) : renderMarkdownSync(md);
   const cfg = await getCodeConfig();
-  return enhanceCodeBlocks(enhanceImages(html), {
+  return enhanceCodeBlocks(enhanceImages(html, altFallback), {
     showCopy: cfg.showCopy,
     showLang: cfg.showLang,
   });

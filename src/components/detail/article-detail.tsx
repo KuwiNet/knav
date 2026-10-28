@@ -18,7 +18,7 @@ export default async function ArticleDetailPage({
   if (!item || item.type !== "article") notFound();
 
   const [html, code] = await Promise.all([
-    renderMarkdown(item.contentMd || ""),
+    renderMarkdown(item.contentMd || "", `${item.title} 配图`),
     getCodeConfig(),
   ]);
 

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getSiteConfig } from "@/lib/site-config";
-import { renderMarkdownSync } from "@/lib/markdown";
+import { enhanceImages, renderMarkdownSync } from "@/lib/markdown";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +15,7 @@ export default async function ContributePage() {
         <div
           className="article-body"
           dangerouslySetInnerHTML={{
-            __html: renderMarkdownSync(cfg.contributeContent),
+            __html: enhanceImages(renderMarkdownSync(cfg.contributeContent), "投稿须知配图"),
           }}
         />
 

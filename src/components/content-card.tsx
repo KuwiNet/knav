@@ -75,6 +75,7 @@ export function ContentCard({
           <CardIcon
             src={iconSrc}
             letter={(item.title || "?").trim().charAt(0).toUpperCase()}
+            alt={`${item.title} 图标`}
           />
         </div>
         <div style={{ minWidth: 0, flex: 1 }}>

@@ -761,7 +761,7 @@ export default function ContentManager({
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           src={c.icon || c.cover}
-                          alt=""
+                          alt={`${c.title} 图标`}
                           style={{ width: "100%", height: "100%", objectFit: "cover" }}
                         />
                       </span>
