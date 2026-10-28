@@ -27,17 +27,21 @@ export function SiteFooter({ cfg }: { cfg: SiteConfig }) {
       <div className="container footer-inner">
         <div className="footer-line">
           Copyright © {new Date().getFullYear()} {copyright}
-          {" · "}
-          <span>
-            Powered by{" "}
-            <a
-              href="https://github.com/KuwiNet/knav"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              knav
-            </a>
-          </span>
+          {cfg.footerPowered ? (
+            <>
+              {" · "}
+              <span>
+                Powered by{" "}
+                <a
+                  href="https://github.com/KuwiNet/knav"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  knav
+                </a>
+              </span>
+            </>
+          ) : null}
           {" · "}
           <Link href="/about">关于本站</Link>
           {" · "}

@@ -1,4 +1,5 @@
 import { getSettingMap } from "./settings";
+import { DEFAULT_ABOUT_CONTENT, DEFAULT_CONTRIBUTE_CONTENT } from "./settings-config";
 import { getAssetBase, resolveAssetHref, resolveAssetUrl } from "./asset-url";
 
 /**
@@ -59,9 +60,14 @@ export interface SiteConfig {
 
   /** 页脚 */
   footerCopyright: string;
+  footerPowered: boolean;
   footerNote: string;
   footerLinks: string;
   footerIcpLink: string;
+
+  /** 可编辑页面（Markdown） */
+  aboutContent: string;
+  contributeContent: string;
 
   /** 是否显示站点壁纸 */
   showWallpaper: boolean;
@@ -166,9 +172,13 @@ export async function getSiteConfig(): Promise<SiteConfig> {
     seoNoindex: bool(map, "seo_noindex", false),
 
     footerCopyright: str(map, "footer_copyright"),
+    footerPowered: bool(map, "footer_powered", true),
     footerNote: str(map, "footer_note"),
     footerLinks: str(map, "footer_links"),
     footerIcpLink: str(map, "footer_icp_link"),
+
+    aboutContent: str(map, "about_content", DEFAULT_ABOUT_CONTENT),
+    contributeContent: str(map, "contribute_content", DEFAULT_CONTRIBUTE_CONTENT),
 
     showWallpaper: bool(map, "show_wallpaper", true),
 

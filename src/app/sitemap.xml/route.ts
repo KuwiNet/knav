@@ -66,6 +66,9 @@ export async function GET() {
   urls.push(
     `  <url><loc>${esc(base)}/about</loc><lastmod>${now}</lastmod><changefreq>monthly</changefreq><priority>0.3</priority></url>`
   );
+  urls.push(
+    `  <url><loc>${esc(base)}/contribute</loc><lastmod>${now}</lastmod><changefreq>monthly</changefreq><priority>0.3</priority></url>`
+  );
 
   for (const c of cats) {
     if (!c.slug) continue;

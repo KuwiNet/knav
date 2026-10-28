@@ -53,6 +53,7 @@ export const SETTING_GROUPS: SettingGroupDef[] = [
   { key: "code", label: "代码块" },
   { key: "seo", label: "SEO" },
   { key: "footer", label: "页脚与版权" },
+  { key: "pages", label: "页面内容", hint: "「关于本站」与「投稿须知」的正文，支持 Markdown；留空保存会恢复默认内容。" },
   { key: "ads", label: "广告栏" },
   { key: "announce", label: "公告与开关" },
   { key: "wallpaper", label: "站点壁纸" },
@@ -89,6 +90,54 @@ export const CODE_THEMES = [
   { value: "solarized", label: "Solarized Dark" },
   { value: "nord", label: "Nord" },
 ];
+
+/** 「关于本站」默认正文（Markdown） */
+export const DEFAULT_ABOUT_CONTENT = `knav 是一个为了方便上网更快捷的一键直达而建立的网址收藏网站，网站完全是非盈利性质，全部内容均来自网络和网友投稿。
+
+## 内容组织
+
+站点使用一套统一的分类体系，**网址收藏**与**文章**共用同一批分类。在同一个分类页里，两种内容会以完全一致的卡片样式混排展示，方便在一个主题下同时找到「直达入口」和「深度说明」。
+
+## 投稿与审核
+
+- 注册后需要通过邮箱验证，才能登录并投稿。
+- 文章支持 Markdown 语法，提交前可在页面上实时预览。
+- 所有投稿都会进入审核队列，审核结果通过站内通知与邮件同时告知。
+- 审核通过的内容会自动发布到对应分类，并显示作者提交的标签。
+
+## 免责声明
+
+站内内容全部来自网络分享与网友投稿，本站仅收录优质资源，不保证外部链接的准确性与完整性，也不为第三方站点承担任何责任。如侵犯到您的权利，请联系反馈邮箱，我们会尽快删除相应内容。`;
+
+/** 「投稿须知」默认正文（Markdown） */
+export const DEFAULT_CONTRIBUTE_CONTENT = `## 一、账号
+
+- 点击右上角「注册」创建账号，填写用户名、邮箱与密码。
+- 注册后系统会发送验证邮件，24 小时内点击链接完成验证才能登录。
+- 投稿、收藏、接收审核通知都依赖验证后的邮箱，请确保邮箱可用。
+
+## 二、投稿类型
+
+- **网址收藏**：填写名称、网址、简介与图标地址，提交后会在对应分类中以卡片形式展示，点击可直接跳转。
+- **文章**：使用 Markdown 书写正文，支持标题、列表、表格、代码块、引用、链接与图片，提交前有实时预览。
+
+## 三、分类与标签
+
+网址与文章使用同一套分类，选择最贴切的分类即可；标签用英文逗号分隔，例如 \`VPS, 教程, 开源\`，最多 10 个。标签会在审核通过时自动创建或复用。
+
+## 四、审核
+
+- 投稿提交后进入待审核状态，可在「个人中心 → 我的投稿」中查看进度。
+- 待审核期间可以自行撤回。
+- 审核结果会通过站内通知和邮件同时通知你，通过的内容会自动发布。
+- 若未通过，请根据审核意见调整后重新投稿。
+
+## 五、内容要求
+
+- 只收录长期可用、无违规内容的资源。
+- 简介请用一到两句话说明用途，便于他人判断是否需要。
+- 不要提交与已有内容重复的条目。
+- 涉及版权、隐私的内容请自行确认已获授权。`;
 
 export const SETTINGS_FIELDS: SettingField[] = [
   /* ---------------------------------------------------------- 基础信息 */
@@ -436,6 +485,14 @@ export const SETTINGS_FIELDS: SettingField[] = [
     hint: "显示为 Copyright © 年份 文案",
   },
   {
+    key: "footer_powered",
+    label: "显示 Powered by knav",
+    type: "switch",
+    group: "footer",
+    default: "1",
+    hint: "显示在版权信息后，链接到 knav 开源仓库",
+  },
+  {
     key: "footer_note",
     label: "页脚说明",
     type: "text",
@@ -457,6 +514,26 @@ export const SETTINGS_FIELDS: SettingField[] = [
     type: "text",
     group: "footer",
     default: "https://beian.miit.gov.cn/",
+  },
+
+  /* ---------------------------------------------------------- 页面内容 */
+  {
+    key: "about_content",
+    label: "关于本站",
+    type: "textarea",
+    group: "pages",
+    default: DEFAULT_ABOUT_CONTENT,
+    rows: 14,
+    hint: "支持 Markdown；留空保存恢复默认内容",
+  },
+  {
+    key: "contribute_content",
+    label: "投稿须知",
+    type: "textarea",
+    group: "pages",
+    default: DEFAULT_CONTRIBUTE_CONTENT,
+    rows: 14,
+    hint: "支持 Markdown；留空保存恢复默认内容",
   },
 
   /* ---------------------------------------------------------- 广告 */
