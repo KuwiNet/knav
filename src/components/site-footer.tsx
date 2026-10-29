@@ -1,4 +1,5 @@
 import Link from "next/link";
+import pkg from "../../package.json";
 import type { SiteConfig } from "@/lib/site-config";
 
 /** 解析页脚额外链接：每行「名称|地址」 */
@@ -38,7 +39,8 @@ export function SiteFooter({ cfg }: { cfg: SiteConfig }) {
                   rel="noopener noreferrer"
                 >
                   knav
-                </a>
+                </a>{" "}
+                <span className="footer-version">{pkg.version}</span>
               </span>
             </>
           ) : null}

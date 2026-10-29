@@ -1985,6 +1985,11 @@ select {
   line-height: 1.9;
 }
 
+.footer-version {
+  white-space: nowrap;
+  opacity: 0.8;
+}
+
 /* ---------------------------------------------------------------- 公告 / 广告 / 关闭 */
 .announce-bar {
   background: var(--accent-soft);
