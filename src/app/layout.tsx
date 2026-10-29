@@ -74,7 +74,9 @@ export default async function RootLayout({
         {/* 主题要在首屏渲染前定下来，否则会先闪一下浅色再切深色 */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var s=localStorage.getItem("knav-theme");var d=window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";document.documentElement.setAttribute("data-theme",s==="dark"||s==="light"?s:d);}catch(e){}})();`,
+            __html: `(function(){var m=${JSON.stringify(
+              cfg.themeMode
+            )};try{var s=localStorage.getItem("knav-theme");if(localStorage.getItem("knav-theme-mode")!==m){localStorage.removeItem("knav-theme");localStorage.setItem("knav-theme-mode",m);s=null;}var d=m==="dark"?"dark":m==="light"?"light":(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");document.documentElement.setAttribute("data-theme",s==="dark"||s==="light"?s:d);}catch(e){document.documentElement.setAttribute("data-theme",m==="dark"?"dark":m==="light"?"light":(window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"));}})();`,
           }}
         />
         {/* 后台「统计与代码」里配置的自定义代码，插入到页面头部 */}

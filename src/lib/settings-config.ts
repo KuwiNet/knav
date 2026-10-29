@@ -266,6 +266,19 @@ export const SETTINGS_FIELDS: SettingField[] = [
 
   /* ---------------------------------------------------------- 外观 */
   {
+    key: "theme_mode",
+    label: "站点主题",
+    type: "select",
+    group: "appearance",
+    default: "system",
+    options: [
+      { value: "system", label: "跟随系统" },
+      { value: "light", label: "浅色" },
+      { value: "dark", label: "深色" },
+    ],
+    hint: "前台默认主题。访客点右下角按钮手动切换后以其选择为准；修改此处会清除访客上次的手动选择",
+  },
+  {
     key: "card_style",
     label: "卡片风格",
     type: "select",

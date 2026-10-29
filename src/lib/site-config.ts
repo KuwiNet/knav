@@ -69,6 +69,9 @@ export interface SiteConfig {
   aboutContent: string;
   contributeContent: string;
 
+  /** 前台默认主题 */
+  themeMode: "system" | "light" | "dark";
+
   /** 是否显示站点壁纸 */
   showWallpaper: boolean;
 
@@ -179,6 +182,10 @@ export async function getSiteConfig(): Promise<SiteConfig> {
 
     aboutContent: str(map, "about_content", DEFAULT_ABOUT_CONTENT),
     contributeContent: str(map, "contribute_content", DEFAULT_CONTRIBUTE_CONTENT),
+
+    themeMode: (["system", "light", "dark"].includes(map.theme_mode)
+      ? map.theme_mode
+      : "system") as SiteConfig["themeMode"],
 
     showWallpaper: bool(map, "show_wallpaper", true),
 
