@@ -17,14 +17,17 @@ export interface SearchEngine {
 
 export const SEARCH_ENGINES: SearchEngine[] = [
   { key: "site", label: "站内搜索", action: "/search", param: "q", external: false },
-  { key: "bing", label: "Bing", action: "https://www.bing.com/search", param: "q", external: true },
-  { key: "baidu", label: "百度", action: "https://www.baidu.com/s", param: "wd", external: true },
   { key: "google", label: "Google", action: "https://www.google.com/search", param: "q", external: true },
-  { key: "so", label: "360", action: "https://www.so.com/s", param: "q", external: true },
+  { key: "baidu", label: "百度", action: "https://www.baidu.com/s", param: "wd", external: true },
+  { key: "bing", label: "Bing", action: "https://www.bing.com/search", param: "q", external: true },
   { key: "sogou", label: "搜狗", action: "https://www.sogou.com/web", param: "query", external: true },
+  { key: "so", label: "360", action: "https://www.so.com/s", param: "q", external: true },
 ];
 
 export const DEFAULT_ENGINE_KEY = "site";
+
+/** 右下角悬浮按钮请求打开顶栏搜索面板 */
+export const OPEN_SEARCH_EVENT = "knav:open-search";
 
 export function getEngine(key: string): SearchEngine {
   return SEARCH_ENGINES.find((e) => e.key === key) ?? SEARCH_ENGINES[0];

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { OPEN_SEARCH_EVENT } from "@/lib/search-engines";
 
 /**
  * 右下角悬浮按钮组。
@@ -96,14 +97,15 @@ export default function FloatingActions() {
 
   return (
     <div className="float-actions" role="complementary" aria-label="快捷操作">
-      <Link
-        href="/search"
+      <button
+        type="button"
         className="float-btn"
         title="站内搜索"
         aria-label="站内搜索"
+        onClick={() => window.dispatchEvent(new Event(OPEN_SEARCH_EVENT))}
       >
         <Icon name="search" />
-      </Link>
+      </button>
 
       <button
         type="button"

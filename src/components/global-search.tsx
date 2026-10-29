@@ -10,6 +10,7 @@ import { createPortal } from "react-dom";
 import { usePathname } from "next/navigation";
 import {
   DEFAULT_ENGINE_KEY,
+  OPEN_SEARCH_EVENT,
   SEARCH_ENGINES,
   SEARCH_HISTORY_KEY,
   SEARCH_HISTORY_MAX,
@@ -77,6 +78,17 @@ export default function GlobalSearch() {
   useEffect(() => {
     setOpen(false);
   }, [pathname]);
+
+  // 右下角悬浮按钮发事件打开同一面板，避免跳到单独的搜索页
+  useEffect(() => {
+    const openPanel = () => {
+      const header = document.querySelector<HTMLElement>(".site-header");
+      setTop(header?.getBoundingClientRect().bottom ?? 0);
+      setOpen(true);
+    };
+    window.addEventListener(OPEN_SEARCH_EVENT, openPanel);
+    return () => window.removeEventListener(OPEN_SEARCH_EVENT, openPanel);
+  }, []);
 
   useEffect(() => {
     if (!open) return;
