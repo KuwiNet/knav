@@ -1,4 +1,5 @@
 import { mirrorNameFromUrl } from "./common";
+import { IMPORTABLE_SETTING_KEYS } from "./settings";
 import { optionValue, pick, pickNum, siteBase, tableRows, toDate, type TableMap } from "./tables";
 import type {
   ImportCategory,
@@ -32,6 +33,13 @@ export function buildKnavSnapshot(
 
   const sourceSiteUrl = siteBase(optionValue(settingRows, ["site_url"]));
 
+  const settings: Record<string, string> = {};
+  for (const r of settingRows) {
+    const key = pick(r, "name");
+    if (!key || !IMPORTABLE_SETTING_KEYS.has(key)) continue;
+    settings[key] = pick(r, "value");
+  }
+
   const categories: ImportCategory[] = [];
   const catIds = new Set<number>();
   for (const r of catRows) {
@@ -46,6 +54,7 @@ export function buildKnavSnapshot(
       description: pick(r, "description"),
       icon: pick(r, "icon"),
       count: pickNum(r, "content_count"),
+      sortOrder: pickNum(r, "sort_order"),
     });
   }
 
@@ -161,5 +170,6 @@ export function buildKnavSnapshot(
     categories,
     contents,
     taxonomies: [{ name: "category", count: categories.length }],
+    settings,
   };
 }

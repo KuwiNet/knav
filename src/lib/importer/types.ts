@@ -33,6 +33,8 @@ export interface ImportCategory {
   /** 图标：可能是图片地址，也可能是主题写死的类名 */
   icon: string;
   count: number;
+  /** 来源库里的排序权重；没有这个概念的系统为 0 */
+  sortOrder?: number;
 }
 
 /** 来源库里的一个镜像下载链接 */
@@ -97,6 +99,11 @@ export interface ImportSnapshot {
   contents: ImportContent[];
   /** 扫描到的原始分类法（WordPress 里分类和标签分属不同 taxonomy） */
   taxonomies: { name: string; count: number }[];
+  /**
+   * 来源站可迁移的站点设置（仅外观 / 站点信息白名单）。
+   * 只有 knav 来源有；密钥、站点地址等始终不在此列。
+   */
+  settings?: Record<string, string>;
 }
 
 /** 用户勾选的导入项 */
@@ -116,6 +123,14 @@ export interface ImportSelection {
     publishAll: boolean;
     /** 导入分类的图标 */
     categoryIcons: boolean;
+    /** 导入图标字体 CSS（分类图标里的 icon-xxx 类名依赖它） */
+    settingIconfont: boolean;
+    /** 导入其余外观设置（LOGO、主题、卡片、代码主题、壁纸） */
+    settingAppearance: boolean;
+    /** 导入站点信息与页面（名称、描述、SEO、页脚、关于/投稿说明） */
+    settingProfile: boolean;
+    /** 同步已存在内容的置顶与排序，而不是直接跳过 */
+    updateExisting: boolean;
   };
 }
 
@@ -131,6 +146,10 @@ export interface ImportStats {
   tags: number;
   links: number;
   skipped: number;
+  /** 更新的已存在内容数 */
+  updated: number;
+  /** 写入的站点设置项数 */
+  settings: number;
 }
 
 /** 扫描完成后返回给后台页面的摘要（完整快照留在服务端） */
@@ -149,6 +168,7 @@ export interface ImportScanResult {
     parentSourceId: number;
     name: string;
     count: number;
+    sortOrder: number;
   }[];
   contents: {
     sourceId: number;
@@ -158,6 +178,12 @@ export interface ImportScanResult {
     categorySourceId: number;
     downloadCount: number;
   }[];
+  /** 来源里可导入的站点设置；没有则为 0 */
+  settings: {
+    iconfont: boolean;
+    appearance: number;
+    profile: number;
+  };
   stats: {
     categories: number;
     contents: number;

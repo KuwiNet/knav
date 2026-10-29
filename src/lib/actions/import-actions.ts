@@ -9,6 +9,7 @@ import { scanDatabase } from "@/lib/importer/mysql-source";
 import { scanSqlDumpFile } from "@/lib/importer/dump-source";
 import { parseWxr } from "@/lib/importer/wxr";
 import { runImport } from "@/lib/importer/run";
+import { countImportableSettings } from "@/lib/importer/settings";
 import { SYSTEM_LABEL } from "@/lib/importer/systems";
 import type { ImportScanResult, ImportSnapshot } from "@/lib/importer/types";
 
@@ -110,6 +111,7 @@ export async function scanImportAction(
       parentSourceId: c.parentSourceId,
       name: c.name,
       count: c.count,
+      sortOrder: c.sortOrder ?? 0,
     })),
     contents: snapshot.contents.map((c) => ({
       sourceId: c.sourceId,
@@ -119,6 +121,7 @@ export async function scanImportAction(
       categorySourceId: c.categorySourceId,
       downloadCount: c.downloads.length,
     })),
+    settings: countImportableSettings(snapshot.settings),
     stats: {
       categories: snapshot.categories.length,
       contents: snapshot.contents.length,
@@ -152,8 +155,15 @@ export async function runImportAction(
     .map((s) => Number(s))
     .filter((n) => Number.isFinite(n));
 
-  if (contentIds.length === 0) {
-    return { ok: false, error: "请至少勾选一条要导入的内容" };
+  const wantsSettings =
+    fd.get("optSettingIconfont") === "1" ||
+    fd.get("optSettingAppearance") === "1" ||
+    fd.get("optSettingProfile") === "1";
+  if (categoryIds.length === 0 && contentIds.length === 0 && !wantsSettings) {
+    return {
+      ok: false,
+      error: "请至少勾选一条内容、一个分类，或勾选要导入的站点设置",
+    };
   }
 
   const selection = {
@@ -165,6 +175,10 @@ export async function runImportAction(
       counters: fd.get("optCounters") === "1",
       publishAll: fd.get("optPublishAll") === "1",
       categoryIcons: fd.get("optCategoryIcons") === "1",
+      settingIconfont: fd.get("optSettingIconfont") === "1",
+      settingAppearance: fd.get("optSettingAppearance") === "1",
+      settingProfile: fd.get("optSettingProfile") === "1",
+      updateExisting: fd.get("optUpdateExisting") === "1",
     },
   };
 
@@ -189,7 +203,13 @@ export async function runImportAction(
 
   try {
     const stats = await runImport(snapshot, selection, sourceLabel);
-    const message = `导入 ${stats.contents} 条内容（网址 ${stats.sites} / 文章 ${stats.articles} / 软件 ${stats.apps}）、${stats.categories} 个分类、${stats.downloads} 个平台版本、${stats.mirrors} 条镜像链接`;
+    const extra = [
+      stats.updated > 0 ? `同步 ${stats.updated} 条已存在内容` : "",
+      stats.settings > 0 ? `写入 ${stats.settings} 项站点设置` : "",
+    ]
+      .filter(Boolean)
+      .join("、");
+    const message = `导入 ${stats.contents} 条内容（网址 ${stats.sites} / 文章 ${stats.articles} / 软件 ${stats.apps}）、${stats.categories} 个分类、${stats.downloads} 个平台版本、${stats.mirrors} 条镜像链接${extra ? `；${extra}` : ""}`;
     await execute(
       `UPDATE knav_import_jobs SET status = 'success', stats = ?, message = ?, finished_at = NOW() WHERE id = ?`,
       [JSON.stringify(stats), message, jobId2]
@@ -199,6 +219,7 @@ export async function runImportAction(
     revalidatePath("/admin/content");
     revalidatePath("/admin/categories");
     revalidatePath("/admin/import");
+    if (stats.settings > 0) revalidatePath("/", "layout");
     return { ok: true, message };
   } catch (e) {
     const msg = (e as Error).message || "导入失败";

@@ -73,14 +73,14 @@ export default function ImportManager({
     () =>
       (scan?.categories ?? [])
         .filter((c) => c.parentSourceId === 0 || !catById.has(c.parentSourceId))
-        .sort((a, b) => a.sourceId - b.sourceId),
+        .sort((a, b) => a.sortOrder - b.sortOrder || a.sourceId - b.sourceId),
     [scan, catById]
   );
 
   const childrenOf = (id: number) =>
     (scan?.categories ?? [])
       .filter((c) => c.parentSourceId === id)
-      .sort((a, b) => a.sourceId - b.sourceId);
+      .sort((a, b) => a.sortOrder - b.sortOrder || a.sourceId - b.sourceId);
 
   const filteredContents = useMemo(() => {
     const kw = keyword.trim().toLowerCase();
@@ -525,14 +525,91 @@ export default function ImportManager({
                   </span>
                 </span>
               </label>
+              <label className="switch-row" style={{ alignItems: "center" }}>
+                <input
+                  type="checkbox"
+                  name="optUpdateExisting"
+                  value="1"
+                  defaultChecked={scan.sourceSystem === "knav"}
+                />
+                <span className="switch-track" aria-hidden="true">
+                  <span className="switch-thumb" />
+                </span>
+                <span className="switch-text">
+                  <span className="switch-label">
+                    更新已存在的内容（同步置顶、排序与分类排序）
+                  </span>
+                </span>
+              </label>
+
+              {scan.settings.iconfont ? (
+                <label className="switch-row" style={{ alignItems: "center" }}>
+                  <input
+                    type="checkbox"
+                    name="optSettingIconfont"
+                    value="1"
+                    defaultChecked
+                  />
+                  <span className="switch-track" aria-hidden="true">
+                    <span className="switch-thumb" />
+                  </span>
+                  <span className="switch-text">
+                    <span className="switch-label">
+                      导入图标字体 CSS（来源分类图标依赖它显示）
+                    </span>
+                  </span>
+                </label>
+              ) : null}
+
+              {scan.settings.appearance > 0 ? (
+                <label className="switch-row" style={{ alignItems: "center" }}>
+                  <input
+                    type="checkbox"
+                    name="optSettingAppearance"
+                    value="1"
+                    defaultChecked
+                  />
+                  <span className="switch-track" aria-hidden="true">
+                    <span className="switch-thumb" />
+                  </span>
+                  <span className="switch-text">
+                    <span className="switch-label">
+                      {`导入站点外观（LOGO、主题、卡片、壁纸，${scan.settings.appearance} 项）`}
+                    </span>
+                  </span>
+                </label>
+              ) : null}
+
+              {scan.settings.profile > 0 ? (
+                <label className="switch-row" style={{ alignItems: "center" }}>
+                  <input
+                    type="checkbox"
+                    name="optSettingProfile"
+                    value="1"
+                    defaultChecked
+                  />
+                  <span className="switch-track" aria-hidden="true">
+                    <span className="switch-thumb" />
+                  </span>
+                  <span className="switch-text">
+                    <span className="switch-label">
+                      {`导入站点信息与页面（名称、SEO、页脚、关于/投稿说明，${scan.settings.profile} 项）`}
+                    </span>
+                  </span>
+                </label>
+              ) : null}
 
               <div className="hint">
-                同一来源重复导入不会产生重复内容（按来源 ID 去重）。
+                同一来源重复导入不会产生重复内容；勾选更新会覆盖来源条目的置顶与排序。
+                站点设置只导入白名单项，站点地址与 SMTP、OAuth、YOURLS、Telegram
+                等密钥始终不导入。
               </div>
 
               <div>
                 <button type="submit" className="btn" disabled={running}>
-                  {running ? "导入中…" : `开始导入（${pickedContents.size} 条）`}
+                  {running
+                    ? "导入中…"
+                    : `开始导入（${pickedContents.size} 条内容 / ${pickedCats.size} 个分类）`}
                 </button>
               </div>
             </form>

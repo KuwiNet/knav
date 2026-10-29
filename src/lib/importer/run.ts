@@ -1,7 +1,9 @@
 import { query, queryOne, transaction } from "../db";
 import { refreshCategoryCounts, refreshTagCounts } from "../counters";
 import { backfillContentCategories } from "../content-categories";
+import { resetSettingsCache } from "../settings";
 import { slugify } from "./common";
+import { selectImportableSettings } from "./settings";
 import type {
   ImportCategory,
   ImportContent,
@@ -53,6 +55,8 @@ export async function runImport(
     tags: 0,
     links: 0,
     skipped: 0,
+    updated: 0,
+    settings: 0,
   };
 
   // 勾选的分类 + 其所有祖先
@@ -60,22 +64,68 @@ export async function runImport(
   const catIdMap = new Map<number, number>();
 
   await transaction(async (conn) => {
+    // 站点设置和内容一起提交；来源白名单之外的项目在扫描时就没进快照
+    const settingsToWrite = selectImportableSettings(
+      snapshot.settings,
+      selection.options
+    );
+    for (const [name, value] of Object.entries(settingsToWrite)) {
+      await conn.query(
+        `INSERT INTO knav_settings (name, value) VALUES (?,?)
+         ON DUPLICATE KEY UPDATE value = VALUES(value), updated_at = CURRENT_TIMESTAMP`,
+        [name, value]
+      );
+      stats.settings++;
+    }
+
     // 分类按层级写入，父分类先建
     const ordered = sortByDepth(selectedCats);
     // 已存在的 slug 也算占用，避免和库里已有的分类撞唯一键
-    const usedSlugs = new Set<string>(
-      (await query<{ slug: string }>("SELECT slug FROM knav_categories")).map(
-        (r) => r.slug
-      )
+    const [existingCatRows] = await conn.query(
+      "SELECT id, slug FROM knav_categories"
     );
+    const catBySlug = new Map<string, number>(
+      (existingCatRows as { id: number; slug: string }[]).map((r) => [
+        String(r.slug),
+        Number(r.id),
+      ])
+    );
+    const usedSlugs = new Set<string>(catBySlug.keys());
 
     for (const cat of ordered) {
       const parentId = cat.parentSourceId
         ? catIdMap.get(cat.parentSourceId) ?? 0
         : 0;
 
-      let slug = slugify(cat.slug || cat.name) || `cat-${cat.sourceId}`;
-      slug = uniqueSlug(clip(slug, 120), usedSlugs);
+      const baseSlug = clip(
+        slugify(cat.slug || cat.name) || `cat-${cat.sourceId}`,
+        120
+      );
+      // 本站自有库再次导入时按 slug 复用已有分类，避免越导越多
+      const reusedId =
+        snapshot.sourceSystem === "knav" ? catBySlug.get(baseSlug) : undefined;
+      if (reusedId) {
+        if (selection.options.updateExisting) {
+          if (selection.options.categoryIcons) {
+            await conn.query(
+              `UPDATE knav_categories
+                  SET parent_id = ?, sort_order = ?, icon = ?
+                WHERE id = ?`,
+              [parentId, cat.sortOrder ?? 0, clipUrl(cat.icon, 1024), reusedId]
+            );
+          } else {
+            await conn.query(
+              `UPDATE knav_categories SET parent_id = ?, sort_order = ? WHERE id = ?`,
+              [parentId, cat.sortOrder ?? 0, reusedId]
+            );
+          }
+        }
+        catIdMap.set(cat.sourceId, reusedId);
+        stats.categories++;
+        continue;
+      }
+
+      const slug = uniqueSlug(baseSlug, usedSlugs);
 
       const [ins] = await conn.query(
         `INSERT INTO knav_categories
@@ -89,10 +139,12 @@ export async function runImport(
           selection.options.categoryIcons ? clipUrl(cat.icon, 1024) : "",
           "",
           "",
-          0,
+          cat.sortOrder ?? 0,
         ]
       );
-      catIdMap.set(cat.sourceId, (ins as any).insertId);
+      const newId = Number((ins as any).insertId);
+      catIdMap.set(cat.sourceId, newId);
+      catBySlug.set(baseSlug, newId);
       stats.categories++;
     }
 
@@ -116,7 +168,17 @@ export async function runImport(
 
     for (const c of selectedContents) {
       if (existing.has(c.sourceId)) {
-        stats.skipped++;
+        if (selection.options.updateExisting) {
+          await conn.query(
+            `UPDATE knav_contents
+                SET sticky = ?, sort_order = ?
+              WHERE source = ? AND source_id = ?`,
+            [c.sticky, c.sortOrder, SOURCE_TAG, c.sourceId]
+          );
+          stats.updated++;
+        } else {
+          stats.skipped++;
+        }
         continue;
       }
       const status = mapStatus(c.status, selection.options.publishAll);
@@ -246,6 +308,7 @@ export async function runImport(
     }
   });
 
+  if (stats.settings > 0) resetSettingsCache();
   await backfillContentCategories();
   await refreshCategoryCounts();
   await refreshTagCounts();
