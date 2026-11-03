@@ -212,6 +212,9 @@ export default function SubmitForm({
           onChange={(e) => setDescription(e.target.value)}
           placeholder="一句话介绍这个站点 / 文章"
         />
+        <div className="hint">
+          支持 Markdown 与 HTML（加粗、链接、列表等），审核通过后按格式显示。
+        </div>
       </div>
 
       {type === "article" ? (

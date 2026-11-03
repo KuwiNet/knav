@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getContentItem, getDownloads, parseContentId } from "@/lib/content";
+import { renderRichText } from "@/lib/markdown";
 
 /** 应用详情页：/app/{id}.html */
 export default async function AppDetailPage({
@@ -52,7 +53,12 @@ export default async function AppDetailPage({
         <div className="divider" />
 
         {item.description ? (
-          <p style={{ fontSize: 15, color: "var(--text-2)" }}>{item.description}</p>
+          <div
+            className="article-body detail-desc"
+            dangerouslySetInnerHTML={{
+              __html: renderRichText(item.description, `${item.title} 配图`),
+            }}
+          />
         ) : null}
 
         {downloads.length > 0 ? (

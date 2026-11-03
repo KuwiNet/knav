@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { ContentItem } from "@/lib/content";
+import { renderRichTextInline } from "@/lib/markdown";
 import type { CardConfig } from "@/lib/settings";
 import FavoriteButton from "./favorite-button";
 import CardIcon from "./card-icon";
@@ -63,6 +64,9 @@ export function ContentCard({
       ? ""
       : item.image || item.cover || "";
 
+  // 简介支持 Markdown / HTML，但卡片是单行摘要，只保留加粗、链接等内联格式
+  const descHtml = item.description ? renderRichTextInline(item.description) : "";
+
   return (
     <article className="site-card">
       <FavoriteButton
@@ -89,7 +93,13 @@ export function ContentCard({
             {item.title}
           </h3>
           <p className="site-desc">
-            {item.description || (isApp ? "软件资源下载" : "暂无简介")}
+            {descHtml ? (
+              <span dangerouslySetInnerHTML={{ __html: descHtml }} />
+            ) : isApp ? (
+              "软件资源下载"
+            ) : (
+              "暂无简介"
+            )}
           </p>
         </div>
       </div>

@@ -271,6 +271,9 @@ function ContentForm({
           onChange={(e) => setDescription(e.target.value)}
           placeholder={type === "article" ? "文章摘要，会显示在卡片上" : "一句话介绍"}
         />
+        <div className="hint">
+          支持 Markdown 与 HTML（加粗、链接、列表等），前台会按格式显示。
+        </div>
       </div>
 
       {type === "article" ? (

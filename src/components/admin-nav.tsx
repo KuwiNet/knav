@@ -25,9 +25,9 @@ const GROUPS: { title: string; items: { href: string; label: string; badge?: num
   {
     title: "系统",
     items: [
-      { href: "/admin/import", label: "数据迁移" },
-      { href: "/admin/mail", label: "消息日志" },
       { href: "/admin/settings", label: "站点设置" },
+      { href: "/admin/mail", label: "消息日志" },
+      { href: "/admin/import", label: "数据迁移" },
     ],
   },
 ];

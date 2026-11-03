@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getContentItem, getContentItems, parseContentId } from "@/lib/content";
+import { renderRichText } from "@/lib/markdown";
 
 /** 网址详情页：/sites/{id}.html */
 export default async function SiteDetailPage({
@@ -51,9 +52,12 @@ export default async function SiteDetailPage({
         <div className="divider" />
 
         {item.description ? (
-          <p style={{ fontSize: 15.5, lineHeight: 1.85, color: "var(--text-2)" }}>
-            {item.description}
-          </p>
+          <div
+            className="article-body detail-desc"
+            dangerouslySetInnerHTML={{
+              __html: renderRichText(item.description, `${item.title} 配图`),
+            }}
+          />
         ) : null}
 
         {item.url ? (

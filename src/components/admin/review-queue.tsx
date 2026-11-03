@@ -3,7 +3,7 @@
 import { useActionState, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { reviewAction } from "@/lib/actions/admin-actions";
-import { renderMarkdownSync } from "@/lib/markdown";
+import { renderMarkdownSync, renderRichText } from "@/lib/markdown";
 import type { FormState } from "@/lib/actions/types";
 import type { Submission } from "@/lib/submissions";
 
@@ -85,9 +85,13 @@ function Item({
       ) : null}
 
       {sub.description ? (
-        <p className="text-muted" style={{ margin: "0 0 8px", fontSize: 14 }}>
-          {sub.description}
-        </p>
+        <div
+          className="article-body detail-desc text-muted"
+          style={{ margin: "0 0 8px", fontSize: 14 }}
+          dangerouslySetInnerHTML={{
+            __html: renderRichText(sub.description, `${sub.title} 配图`),
+          }}
+        />
       ) : null}
 
       {sub.type === "article" && sub.contentMd ? (

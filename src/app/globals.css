@@ -693,6 +693,21 @@ select {
   min-height: 40px;
 }
 
+/* 简介里的链接要盖过整卡点击层，否则点不动 */
+.site-desc a {
+  position: relative;
+  z-index: 2;
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.site-desc code {
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  font-size: 12px;
+}
+
 .site-foot {
   display: flex;
   align-items: center;
@@ -1178,6 +1193,40 @@ select {
   background: var(--surface-2);
 }
 
+/* 用户列表列多：固定列宽 + 省略号，页面不再被表格撑宽；窄屏只在表格内部横向滚动 */
+.user-table {
+  table-layout: fixed;
+  min-width: 880px;
+}
+
+.user-table th,
+.user-table td {
+  padding: 9px 7px;
+}
+
+.user-cell {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.user-cell > :first-child {
+  flex: none;
+}
+
+.user-cell-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.cell-ellipsis {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ---------------------------------------------------------------- 详情页 */
 .detail {
   background: var(--surface);
@@ -1332,6 +1381,20 @@ select {
   border: none;
   border-top: 1px solid var(--border);
   margin: 2em 0;
+}
+
+/* 简介 / 摘要：复用正文排版，但首尾不留大段空白 */
+.detail-desc {
+  font-size: 15.5px;
+  color: var(--text-2);
+}
+
+.detail-desc > :first-child {
+  margin-top: 0;
+}
+
+.detail-desc > :last-child {
+  margin-bottom: 0;
 }
 
 /* ---------------------------------------------------------------- 侧栏 */

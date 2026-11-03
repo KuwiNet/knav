@@ -17,10 +17,17 @@ export function sanitizeHtml(html: string): string {
     .replace(/\s+on[a-z]+\s*=\s*"[^"]*"/gi, "")
     .replace(/\s+on[a-z]+\s*=\s*'[^']*'/gi, "")
     .replace(/\s+on[a-z]+\s*=\s*[^\s>]+/gi, "")
-    // 移除 javascript: 协议
-    .replace(/(href|src)\s*=\s*("|')\s*javascript:[^"']*\2/gi, "$1=$2#$2")
-    // 移除 data: 协议（防止通过 data:text/html 执行脚本）
-    .replace(/(href|src)\s*=\s*("|')\s*data:text\/html[^"']*\2/gi, "$1=$2#$2")
+    // 移除危险协议，兼容带引号、不带引号两种写法
+    .replace(
+      /\b(href|src|xlink:href)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi,
+      (match, name: string, dq?: string, sq?: string, uq?: string) => {
+        const value = (dq ?? sq ?? uq ?? "").trim();
+        if (/^(?:javascript|vbscript|data:text\/html)/i.test(value)) {
+          return `${name}="#"`;
+        }
+        return match;
+      }
+    )
     .trim();
 }
 
@@ -85,7 +92,60 @@ export function looksLikeHtml(text: string): boolean {
   );
 }
 
-/** 从 HTML 或 Markdown 正文里提取纯文本摘要 */export function excerptFromContent(text: string, length = 120): string {
+/**
+ * 渲染简介 / 摘要：Markdown 或 HTML 都能用。
+ *
+ * 后台和投稿框里的简介可能是一句话、一段 Markdown，也可能是从别处复制的 HTML。
+ * 统一交给 marked 解析（原生 HTML 会原样保留），再走安全过滤与图片懒加载，
+ * 这样两种写法混着填也能正常显示，不会把标签当文字漏出来。
+ */
+export function renderRichText(text: string, altFallback = "配图"): string {
+  const raw = (text || "").trim();
+  if (!raw) return "";
+  return enhanceImages(renderMarkdownSync(raw), altFallback);
+}
+
+/** 卡片摘要只保留内联格式，块级标签压平成空格，避免把卡片布局撑破 */
+const INLINE_TAG = new Set([
+  "a",
+  "strong",
+  "b",
+  "em",
+  "i",
+  "u",
+  "s",
+  "del",
+  "code",
+  "mark",
+  "small",
+  "span",
+  "sub",
+  "sup",
+]);
+
+export function renderRichTextInline(text: string, altFallback = "配图"): string {
+  const raw = (text || "").trim();
+  if (!raw) return "";
+
+  // 卡片里放不下图片和换行，直接去掉；块级标签留一个空格分隔文字
+  const html = renderRichText(raw, altFallback)
+    .replace(/<img\b[^>]*>/gi, " ")
+    .replace(/<\s*br\s*\/?>/gi, " ")
+    .replace(
+      /<\/?\s*(p|div|h[1-6]|ul|ol|li|blockquote|pre|table|thead|tbody|tr|td|th|figure|figcaption|section|article|header|footer|hr)\b[^>]*>/gi,
+      " "
+    )
+    .replace(/<\/?\s*([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g, (tag, name: string) =>
+      INLINE_TAG.has(name.toLowerCase()) ? tag : ""
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return html;
+}
+
+/** 从 HTML 或 Markdown 正文里提取纯文本摘要 */
+export function excerptFromContent(text: string, length = 120): string {
   const raw = text || "";
   if (!looksLikeHtml(raw)) return excerptFromMarkdown(raw, length);
 

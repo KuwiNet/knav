@@ -543,20 +543,20 @@ export default function UserManager({
       ) : null}
 
       <div className="table-wrap">
-        <table className="table">
+        <table className="table user-table">
           <thead>
             <tr>
-              <th style={{ width: 54 }}>ID</th>
-              <th>用户</th>
-              <th style={{ width: 190 }}>邮箱</th>
-              <th style={{ width: 110 }}>第三方</th>
-              <th style={{ width: 76 }}>通知</th>
-              <th style={{ width: 60 }}>收藏</th>
-              <th style={{ width: 90 }}>角色</th>
-              <th style={{ width: 90 }}>状态</th>
-              <th style={{ width: 150 }}>注册时间</th>
-              <th style={{ width: 150 }}>最近登录</th>
-              <th style={{ width: 80 }}>操作</th>
+              <th style={{ width: "4%" }}>ID</th>
+              <th style={{ width: "15%" }}>用户</th>
+              <th style={{ width: "21%" }}>邮箱</th>
+              <th style={{ width: "9%" }}>第三方</th>
+              <th style={{ width: "6%" }}>通知</th>
+              <th style={{ width: "5%" }}>收藏</th>
+              <th style={{ width: "7.5%" }}>角色</th>
+              <th style={{ width: "7.5%" }}>状态</th>
+              <th style={{ width: "8.75%" }}>注册时间</th>
+              <th style={{ width: "8.75%" }}>最近登录</th>
+              <th style={{ width: "7.5%" }}>操作</th>
             </tr>
           </thead>
           <tbody>
@@ -571,22 +571,31 @@ export default function UserManager({
                 <tr key={u.id}>
                   <td className="text-muted">{u.id}</td>
                   <td>
-                    <div className="row" style={{ gap: 9 }}>
+                    <div className="user-cell">
                       <Avatar
                         src={u.avatar}
                         name={u.nickname || u.username}
                         size={30}
                       />
-                      <div style={{ minWidth: 0 }}>
-                        <div className="strong">{u.username}</div>
+                      <div className="user-cell-main">
+                        <div className="strong cell-ellipsis" title={u.username}>
+                          {u.username}
+                        </div>
                         {u.nickname && u.nickname !== u.username ? (
-                          <div className="text-muted text-sm">{u.nickname}</div>
+                          <div
+                            className="text-muted text-sm cell-ellipsis"
+                            title={u.nickname}
+                          >
+                            {u.nickname}
+                          </div>
                         ) : null}
                       </div>
                     </div>
                   </td>
-                  <td className="text-muted text-sm" style={{ overflowWrap: "anywhere" }}>
-                    {u.email}
+                  <td className="text-muted text-sm">
+                    <span className="cell-ellipsis" title={u.email}>
+                      {u.email}
+                    </span>
                   </td>
                   <td>
                     {uIdentities.length > 0 ? (
@@ -617,11 +626,25 @@ export default function UserManager({
                   <td>
                     <StatusBadge status={u.status} />
                   </td>
-                  <td className="text-muted text-sm nowrap">
-                    {String(u.createdAt).slice(0, 16)}
+                  <td className="text-muted text-sm">
+                    <span
+                      className="cell-ellipsis"
+                      title={String(u.createdAt).slice(0, 16)}
+                    >
+                      {String(u.createdAt).slice(0, 10)}
+                    </span>
                   </td>
-                  <td className="text-muted text-sm nowrap">
-                    {u.lastLoginAt ? String(u.lastLoginAt).slice(0, 16) : "-"}
+                  <td className="text-muted text-sm">
+                    {u.lastLoginAt ? (
+                      <span
+                        className="cell-ellipsis"
+                        title={String(u.lastLoginAt).slice(0, 16)}
+                      >
+                        {String(u.lastLoginAt).slice(0, 10)}
+                      </span>
+                    ) : (
+                      "-"
+                    )}
                   </td>
                   <td>
                     <button
