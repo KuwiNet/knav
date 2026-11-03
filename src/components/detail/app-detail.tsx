@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getContentItem, getDownloads, parseContentId } from "@/lib/content";
-import { renderRichText } from "@/lib/markdown";
+import { renderRichDescription } from "@/lib/submissions";
+import { getCodeConfig } from "@/lib/settings";
+import CodeCopy from "./code-copy";
 
 /** 应用详情页：/app/{id}.html */
 export default async function AppDetailPage({
@@ -18,6 +20,11 @@ export default async function AppDetailPage({
   const downloads = await getDownloads(item.id);
   // 架构列只在真的填了架构时才出现，全是空的话多一列纯占宽度
   const showArch = downloads.some((d) => d.arch);
+
+  const [descHtml, code] = await Promise.all([
+    renderRichDescription(item.description, `${item.title} 配图`),
+    getCodeConfig(),
+  ]);
 
   return (
     <div className="layout-with-aside">
@@ -52,12 +59,10 @@ export default async function AppDetailPage({
 
         <div className="divider" />
 
-        {item.description ? (
+        {descHtml ? (
           <div
-            className="article-body detail-desc"
-            dangerouslySetInnerHTML={{
-              __html: renderRichText(item.description, `${item.title} 配图`),
-            }}
+            className={`article-body detail-desc code-theme-${code.theme} code-inline-${code.inlineStyle}`}
+            dangerouslySetInnerHTML={{ __html: descHtml }}
           />
         ) : null}
 
@@ -145,6 +150,8 @@ export default async function AppDetailPage({
           </ul>
         </div>
       </aside>
+
+      <CodeCopy />
     </div>
   );
 }

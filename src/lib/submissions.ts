@@ -6,7 +6,7 @@ if (process.env.NEXT_RUNTIME !== undefined) {
 import { query, queryOne, execute, transaction } from "./db";
 import { notify } from "./auth";
 import { sendReviewResultMail } from "./mail";
-import { renderMarkdownSync, sanitizeHtml, excerptFromMarkdown, looksLikeHtml, enhanceCodeBlocks, enhanceImages } from "./markdown";
+import { renderMarkdownSync, renderRichText, sanitizeHtml, excerptFromMarkdown, looksLikeHtml, enhanceCodeBlocks, enhanceImages } from "./markdown";
 import { getCodeConfig } from "./settings";
 import { localizeImage, localizeContentImages } from "./media";
 import { saveContentShortlink } from "./shortlink";
@@ -406,6 +406,23 @@ export async function renderMarkdown(
   const html = looksLikeHtml(md) ? sanitizeHtml(md) : renderMarkdownSync(md);
   const cfg = await getCodeConfig();
   return enhanceCodeBlocks(enhanceImages(html, altFallback), {
+    showCopy: cfg.showCopy,
+    showLang: cfg.showLang,
+  });
+}
+
+/**
+ * 简介 / 摘要渲染。
+ *
+ * 和文章正文使用同一套代码块增强（语言标签 + 复制按钮），
+ * 外观同样跟随后台「代码块」设置，详情页只需再挂主题 class 与 CodeCopy。
+ */
+export async function renderRichDescription(
+  text: string,
+  altFallback = "配图"
+): Promise<string> {
+  const cfg = await getCodeConfig();
+  return enhanceCodeBlocks(renderRichText(text, altFallback), {
     showCopy: cfg.showCopy,
     showLang: cfg.showLang,
   });
