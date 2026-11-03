@@ -2,6 +2,7 @@ import "./load-env";
 import mysql from "mysql2/promise";
 import fs from "node:fs";
 import path from "node:path";
+import { dbConfig } from "../src/lib/db-config";
 
 /**
  * 清空并重建数据库。
@@ -13,13 +14,7 @@ import path from "node:path";
  *   npx tsx scripts/db-reset.ts --yes
  */
 
-const cfg = {
-  host: process.env.DB_HOST || "127.0.0.1",
-  port: Number(process.env.DB_PORT || 3307),
-  user: process.env.DB_USER || "root",
-  password: process.env.DB_PASS || "",
-  database: process.env.DB_NAME || "knav_dev",
-};
+const cfg = dbConfig();
 
 const CONFIRMED = process.argv.includes("--yes");
 

@@ -1,5 +1,6 @@
 import "./load-env";
 import mysql from "mysql2/promise";
+import { dbConfig } from "../src/lib/db-config";
 
 /**
  * 本地开发种子数据（knav 自有表结构）。
@@ -10,13 +11,7 @@ import mysql from "mysql2/promise";
  * 用法: npx tsx scripts/seed.ts
  */
 
-const cfg = {
-  host: process.env.DB_HOST || "127.0.0.1",
-  port: Number(process.env.DB_PORT || 3307),
-  user: process.env.DB_USER || "root",
-  password: process.env.DB_PASS || "",
-  database: process.env.DB_NAME || "knav_dev",
-};
+const cfg = dbConfig();
 
 /** 分类树：parent 为上级分类的 key */
 const CATEGORIES: { key: string; name: string; slug: string; parent?: string; icon: string }[] = [

@@ -10,6 +10,7 @@ import "./load-env";
 import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
 import mysql from "mysql2/promise";
+import { dbConfig } from "../src/lib/db-config";
 
 async function main() {
   const [username, email, password] = process.argv.slice(2);
@@ -22,13 +23,7 @@ async function main() {
     process.exit(1);
   }
 
-  const conn = await mysql.createConnection({
-    host: process.env.DB_HOST || "127.0.0.1",
-    port: Number(process.env.DB_PORT || 3307),
-    user: process.env.DB_USER || "root",
-    password: process.env.DB_PASS || "",
-    database: process.env.DB_NAME || "knav_dev",
-  });
+  const conn = await mysql.createConnection({ ...dbConfig() });
 
   const hash = await bcrypt.hash(password, 12);
   const [rows] = await conn.query("SELECT id FROM knav_users WHERE username = ? LIMIT 1", [

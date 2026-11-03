@@ -4,15 +4,10 @@
  */
 import "./load-env";
 import mysql from "mysql2/promise";
+import { dbConfig } from "../src/lib/db-config";
 
-const admin = {
-  host: process.env.DB_HOST || "127.0.0.1",
-  port: Number(process.env.DB_PORT || 3307),
-  user: process.env.DB_USER || "root",
-  password: process.env.DB_PASS || "",
-};
-
-const DB_NAME = process.env.DB_NAME || "knav_dev";
+// 建库要连到「还没有选库」的服务端，所以把 database 单独拿出来
+const { database: DB_NAME, ...admin } = dbConfig();
 
 async function main() {
   const conn = await mysql.createConnection(admin);

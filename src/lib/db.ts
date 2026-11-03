@@ -3,23 +3,21 @@ if (process.env.NEXT_RUNTIME !== undefined) {
   require("server-only");
 }
 import mysql from "mysql2/promise";
+import { dbConfig } from "./db-config";
 
 /**
  * 数据库连接池。
  *
  * knav 用自己的表（前缀 knav_），连接信息全部来自环境变量，
  * 不再直连任何 WordPress 库——老站数据走「数据迁移」导入。
+ * 具体读哪几个变量、以及 DATABASE_URL / DB_MODE 的用法见 ./db-config。
  */
 
 const globalForDb = globalThis as unknown as { kwPool?: mysql.Pool };
 
 function createPool() {
   return mysql.createPool({
-    host: process.env.DB_HOST || "127.0.0.1",
-    port: Number(process.env.DB_PORT || 3307),
-    user: process.env.DB_USER || "root",
-    password: process.env.DB_PASS || "",
-    database: process.env.DB_NAME || "knav_dev",
+    ...dbConfig(),
     waitForConnections: true,
     connectionLimit: Number(process.env.DB_POOL_SIZE || 10),
     queueLimit: 0,

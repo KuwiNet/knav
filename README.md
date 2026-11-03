@@ -374,9 +374,13 @@ npm run build && npm start   # 生产模式
 | 变量 | 说明 |
 |---|---|
 | `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASS` / `DB_NAME` | 数据库连接 |
+| `DATABASE_URL` | 一条串写法 `mysql://user:pass@host:3306/db`，托管库（PlanetScale、TiDB Serverless）与 Cloudflare Hyperdrive 常用；设置了它优先于 `DB_*`。默认走 TLS，明文加 `?sslmode=disable` |
+| `DB_MODE` | 留空为直连（自建 / 内网 RDS / Docker）；`edge` 给 Cloudflare Workers 用，会带上 mysql2 的 `disableEval` |
 | `DB_POOL_SIZE` | 连接池大小，默认 10 |
 | `SITE_URL` | 站点根地址，后台「站点地址」未配置时用于生成邮件链接与 LOGO |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_FROM` / `SMTP_FROM_NAME` | 邮件 |
+
+表结构与 SQL 只有一套（MySQL），换平台改的只是上面这几个连接变量。
 
 ---
 

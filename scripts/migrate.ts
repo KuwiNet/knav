@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import mysql from "mysql2/promise";
 import fs from "node:fs";
 import path from "node:path";
+import { dbConfig } from "../src/lib/db-config";
 
 /**
  * 建表：执行 db/schema.sql，并补齐旧库缺失的列。
@@ -13,18 +14,11 @@ import path from "node:path";
  * 用法: npx tsx scripts/migrate.ts
  */
 async function main() {
-  const host = process.env.DB_HOST || "127.0.0.1";
-  const port = Number(process.env.DB_PORT || 3307);
-  const user = process.env.DB_USER || "root";
-  const password = process.env.DB_PASS || "";
-  const db = process.env.DB_NAME || "knav_dev";
+  const cfg = dbConfig();
+  const db = cfg.database;
 
   const conn = await mysql.createConnection({
-    host,
-    port,
-    user,
-    password,
-    database: db,
+    ...cfg,
     multipleStatements: true,
   });
   const sql = fs.readFileSync(path.join(process.cwd(), "db", "schema.sql"), "utf8");
