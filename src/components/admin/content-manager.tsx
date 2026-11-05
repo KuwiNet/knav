@@ -96,13 +96,14 @@ function ContentForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.success]);
 
-  // 网址 / 标题 / 简介 / 图标都做成受控的：
+  // 网址 / 标题 / 简介 / 图标 / 标签都做成受控的：
   // 「获取信息」按钮拿到对方站点的数据后要能直接回填
   const [title, setTitle] = useState(detail?.title ?? "");
   const [url, setUrl] = useState(detail?.url ?? "");
   const [description, setDescription] = useState(detail?.description ?? "");
   const [icon, setIcon] = useState(detail?.icon ?? "");
   const [cover, setCover] = useState(detail?.cover ?? "");
+  const [tags, setTags] = useState(detail?.tags ?? "");
   const [categoryIds, setCategoryIds] = useState<number[]>(
     detail?.categoryIds?.length
       ? detail.categoryIds
@@ -138,6 +139,7 @@ function ContentForm({
       if (r.description) setDescription(r.description);
       if (r.icon) setIcon(r.icon);
       if (r.cover) setCover(r.cover);
+      if (r.tags) setTags(r.tags);
       setFetchMsg("已获取到站点信息，确认后点保存");
     } catch (e) {
       setFetchMsg(`获取失败：${(e as Error).message}`);
@@ -221,7 +223,7 @@ function ContentForm({
             </button>
           </div>
           <div className="hint">
-            填好网址后点「获取信息」，自动抓取对方站点的名称、简介和图标。
+            填好网址后点「获取信息」，自动抓取对方站点的名称、简介、图标和标签。
           </div>
           {fetchMsg ? (
             <div className="text-sm" style={{ marginTop: 6, color: fetchMsg.includes("已获取") ? "var(--green)" : "var(--red)" }}>
@@ -468,7 +470,7 @@ function ContentForm({
       <div className="row" style={{ gap: 10, marginTop: 12, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 150 }}>
           <label className="label">标签</label>
-          <input className="input" name="tags" defaultValue={detail?.tags ?? ""} placeholder="逗号分隔，如：教程, Docker" />
+          <input className="input" name="tags" value={tags} onChange={(e) => setTags(e.target.value)} placeholder="逗号分隔，如：教程, Docker" />
         </div>
         <div style={{ flex: 0, minWidth: 100 }}>
           <label className="label">排序</label>

@@ -678,7 +678,15 @@ export async function updateContentAction(
 export async function fetchSiteMetaAction(
   url: string
 ): Promise<
-  | { ok: true; title: string; description: string; icon: string; cover: string; finalUrl: string }
+  | {
+      ok: true;
+      title: string;
+      description: string;
+      icon: string;
+      cover: string;
+      tags: string;
+      finalUrl: string;
+    }
   | { ok: false; error: string }
 > {
   await requireAdmin();

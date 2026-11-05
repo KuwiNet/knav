@@ -70,6 +70,7 @@ export interface SubmitMetaResult {
   description?: string;
   icon?: string;
   cover?: string;
+  tags?: string;
 }
 
 /** 同一用户两次抓取的最小间隔，免得拿这个接口当外发洪水器 */
@@ -105,6 +106,6 @@ export async function fetchSubmitMetaAction(
   const finalGuard = await assertPublicHttpUrl(r.meta.finalUrl);
   if (!finalGuard.ok) return { ok: false, error: "目标站点跳转到了内网地址，已拒绝" };
 
-  const { title, description, icon, cover } = r.meta;
-  return { ok: true, title, description, icon, cover };
+  const { title, description, icon, cover, tags } = r.meta;
+  return { ok: true, title, description, icon, cover, tags };
 }

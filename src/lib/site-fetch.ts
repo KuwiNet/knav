@@ -4,7 +4,7 @@ if (process.env.NEXT_RUNTIME !== undefined) {
 }
 
 /**
- * 抓取目标站点的公开信息（标题 / 简介 / 图标）。
+ * 抓取目标站点的公开信息（标题 / 简介 / 图标 / 标签）。
  *
  * 后台添加网址时，只要填了地址点一下「获取」，
  * 就自动把站名、简介、logo 填好，省得一个个手敲。
@@ -21,6 +21,8 @@ export interface SiteMeta {
   icon: string;
   /** 封面图（og:image） */
   cover: string;
+  /** 站点标签（meta keywords / article:tag，逗号分隔） */
+  tags: string;
   /** 最终访问的地址（跟随跳转后） */
   finalUrl: string;
 }
@@ -247,6 +249,29 @@ export async function fetchSiteMeta(
     }
   }
 
+  // 标签：keywords 为主，再补 article:tag（不少 CMS 只输出后者）
+  // 关键词里常混着一整句话，只留长度合适、去重后能当标签用的
+  const words: string[] = [];
+  const kwTag = html.match(/<meta\b[^>]*name\s*=\s*["']keywords["'][^>]*>/i);
+  if (kwTag) words.push(...decodeEntities(attr(kwTag[0], "content")).split(/[,，]/));
+  for (const t of html.match(
+    /<meta\b[^>]*property\s*=\s*["']article:tag["'][^>]*>/gi
+  ) ?? []) {
+    words.push(decodeEntities(attr(t, "content")));
+  }
+  const picked: string[] = [];
+  const seen = new Set<string>();
+  for (const w of words) {
+    const name = w.trim().replace(/\s+/g, " ");
+    if (!name || name.length > 24) continue;
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    picked.push(name);
+    // 与审核通过时写标签的上限保持一致，抓多了也用不上
+    if (picked.length >= 10) break;
+  }
+
   // 标题太长时截断（老站标题常带一长串后缀）
   if (title.length > 80) title = `${title.slice(0, 78)}…`;
 
@@ -257,6 +282,7 @@ export async function fetchSiteMeta(
       description,
       icon,
       cover,
+      tags: picked.join(", "),
       finalUrl: page.finalUrl,
     },
   };

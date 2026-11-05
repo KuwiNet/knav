@@ -29,11 +29,12 @@ export default function SubmitForm({
 }) {
   const [state, action] = useActionState<FormState, FormData>(submitAction, {});
   const [type, setType] = useState<"site" | "article">("site");
-  // 这四个字段要被「获取信息」回填，所以做成受控
+  // 这几个字段要被「获取信息」回填，所以做成受控
   const [title, setTitle] = useState("");
   const [url, setUrl] = useState("");
   const [description, setDescription] = useState("");
   const [cover, setCover] = useState("");
+  const [tags, setTags] = useState("");
   const [fetching, setFetching] = useState(false);
   const [fetchMsg, setFetchMsg] = useState("");
 
@@ -52,7 +53,10 @@ export default function SubmitForm({
       }
       if (r.title && !title.trim()) setTitle(r.title);
       if (r.description && !description.trim()) setDescription(r.description);
-      if (r.cover) setCover(r.cover);
+      // 这一栏要的是小图标，favicon 才对得上；og:image 多是横版大图，只在没抓到图标时兜底
+      const iconUrl = r.icon || r.cover;
+      if (iconUrl && !cover.trim()) setCover(iconUrl);
+      if (r.tags && !tags.trim()) setTags(r.tags);
       setFetchMsg("已抓到站点信息，空的字段会自动填上，确认后提交");
     } catch (e) {
       setFetchMsg(`获取失败：${(e as Error).message}`);
@@ -168,7 +172,7 @@ export default function SubmitForm({
               </button>
             </div>
             <div className="hint">
-              必须以 http:// 或 https:// 开头。点「获取信息」自动抓取对方站点的名称、简介和图标。
+              必须以 http:// 或 https:// 开头。点「获取信息」自动抓取对方站点的名称、简介、图标和标签。
             </div>
             {fetchMsg ? (
               <div
@@ -184,7 +188,7 @@ export default function SubmitForm({
           </div>
           <div className="field">
             <label className="label" htmlFor="cover">
-              图标地址（可选）
+              图标地址
             </label>
             <input
               className="input"
@@ -261,6 +265,8 @@ export default function SubmitForm({
           id="tags"
           name="tags"
           list="tag-options"
+          value={tags}
+          onChange={(e) => setTags(e.target.value)}
           placeholder="用逗号分隔，如：VPS, 教程, 开源"
         />
         <datalist id="tag-options">
