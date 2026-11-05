@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getContentItem, parseContentId } from "@/lib/content";
 import { renderMarkdown } from "@/lib/submissions";
-import { getCodeConfig } from "@/lib/settings";
+import { codeThemeClasses } from "@/lib/code-theme";
 import CodeCopy from "./code-copy";
 
 /** 文章详情页：/{id}.html */
@@ -17,9 +17,9 @@ export default async function ArticleDetailPage({
   const item = await getContentItem(id);
   if (!item || item.type !== "article") notFound();
 
-  const [html, code] = await Promise.all([
+  const [html, codeClasses] = await Promise.all([
     renderMarkdown(item.contentMd || "", `${item.title} 配图`),
-    getCodeConfig(),
+    codeThemeClasses(),
   ]);
 
   return (
@@ -49,7 +49,7 @@ export default async function ArticleDetailPage({
         ) : null}
 
         <div
-          className={`article-body code-theme-${code.theme} code-inline-${code.inlineStyle}`}
+          className={`article-body ${codeClasses}`}
           dangerouslySetInnerHTML={{ __html: html }}
         />
       </article>

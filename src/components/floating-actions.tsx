@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { OPEN_SEARCH_EVENT } from "@/lib/search-engines";
+import { CODE_THEME_BY_MODE } from "@/lib/settings-config";
 
 /**
  * 右下角悬浮按钮组。
@@ -14,6 +15,17 @@ import { OPEN_SEARCH_EVENT } from "@/lib/search-engines";
 const THEME_KEY = "knav-theme";
 
 type Theme = "light" | "dark";
+
+/** 手动切模式时，当前页已渲染的代码块也立刻换成对应配色，不用等刷新 */
+function applyCodeTheme(mode: Theme) {
+  const want = `code-theme-${CODE_THEME_BY_MODE[mode]}`;
+  document.querySelectorAll<HTMLElement>(".article-body").forEach((el) => {
+    const cur = Array.from(el.classList).find((c) => c.startsWith("code-theme-"));
+    if (!cur || cur === want) return;
+    el.classList.remove(cur);
+    el.classList.add(want);
+  });
+}
 
 function Icon({ name }: { name: "up" | "search" | "sun" | "moon" | "home" }) {
   const common = {
@@ -82,12 +94,23 @@ export default function FloatingActions() {
   useEffect(() => {
     const cur = document.documentElement.dataset.theme;
     if (cur === "dark" || cur === "light") setTheme(cur);
+    // 访客的手动选择存在 localStorage；服务端只有拿到 cookie 才认它，
+    // 这次渲染没拿到（首次切换后的刷新、或 cookie 被清）时在这里补上配色
+    try {
+      const manual = localStorage.getItem(THEME_KEY);
+      if (manual === "dark" || manual === "light") applyCodeTheme(manual);
+    } catch {
+      // 隐私模式下读不了，忽略即可
+    }
   }, []);
 
   const toggleTheme = () => {
     const next: Theme = theme === "dark" ? "light" : "dark";
     setTheme(next);
     document.documentElement.dataset.theme = next;
+    applyCodeTheme(next);
+    // 手动选择要同时进 localStorage（防闪烁）和 cookie（服务端渲染代码块配色靠它）
+    document.cookie = `${THEME_KEY}=${next}; path=/; max-age=31536000; samesite=lax`;
     try {
       localStorage.setItem(THEME_KEY, next);
     } catch {

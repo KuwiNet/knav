@@ -91,6 +91,18 @@ export const CODE_THEMES = [
   { value: "nord", label: "Nord" },
 ];
 
+/**
+ * 访客手动切换深浅模式后，代码块跟随的配色。
+ *
+ * 后台的「代码块主题」只在访客没手动选过时生效（站点默认），
+ * 一旦明确切到深色就用 One Dark、切到浅色就用 GitHub 浅色，
+ * 免得深色页面里嵌一块浅灰代码。值必须是 CODE_THEMES 里的 value。
+ */
+export const CODE_THEME_BY_MODE: Record<"dark" | "light", string> = {
+  dark: "one-dark",
+  light: "github",
+};
+
 /** 「关于本站」默认正文（Markdown） */
 export const DEFAULT_ABOUT_CONTENT = `knav 是一个为了方便上网更快捷的一键直达而建立的网址收藏网站，网站完全是非盈利性质，全部内容均来自网络和网友投稿。
 
@@ -394,6 +406,7 @@ export const SETTINGS_FIELDS: SettingField[] = [
     group: "code",
     default: "github",
     options: CODE_THEMES,
+    hint: "站点默认配色。访客用右下角按钮手动切过深浅之后以模式为准：深色用 One Dark，浅色用 GitHub 浅色",
   },
   {
     key: "code_show_copy",

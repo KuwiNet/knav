@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getContentItem, getContentItems, parseContentId } from "@/lib/content";
 import { renderRichDescription } from "@/lib/submissions";
-import { getCodeConfig } from "@/lib/settings";
+import { codeThemeClasses } from "@/lib/code-theme";
 import CodeCopy from "./code-copy";
 
 /** 网址详情页：/sites/{id}.html */
@@ -20,9 +20,9 @@ export default async function SiteDetailPage({
   const related = await getContentItems({ categoryId: item.categoryId, limit: 7 });
   const relatedFiltered = related.filter((r) => r.id !== item.id).slice(0, 6);
 
-  const [descHtml, code] = await Promise.all([
+  const [descHtml, codeClasses] = await Promise.all([
     renderRichDescription(item.description, `${item.title} 配图`),
-    getCodeConfig(),
+    codeThemeClasses(),
   ]);
 
   return (
@@ -60,7 +60,7 @@ export default async function SiteDetailPage({
 
         {descHtml ? (
           <div
-            className={`article-body detail-desc code-theme-${code.theme} code-inline-${code.inlineStyle}`}
+            className={`article-body detail-desc ${codeClasses}`}
             dangerouslySetInnerHTML={{ __html: descHtml }}
           />
         ) : null}

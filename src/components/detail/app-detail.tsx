@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getContentItem, getDownloads, parseContentId } from "@/lib/content";
 import { renderRichDescription } from "@/lib/submissions";
-import { getCodeConfig } from "@/lib/settings";
+import { codeThemeClasses } from "@/lib/code-theme";
 import CodeCopy from "./code-copy";
 
 /** 应用详情页：/app/{id}.html */
@@ -21,9 +21,9 @@ export default async function AppDetailPage({
   // 架构列只在真的填了架构时才出现，全是空的话多一列纯占宽度
   const showArch = downloads.some((d) => d.arch);
 
-  const [descHtml, code] = await Promise.all([
+  const [descHtml, codeClasses] = await Promise.all([
     renderRichDescription(item.description, `${item.title} 配图`),
-    getCodeConfig(),
+    codeThemeClasses(),
   ]);
 
   return (
@@ -61,7 +61,7 @@ export default async function AppDetailPage({
 
         {descHtml ? (
           <div
-            className={`article-body detail-desc code-theme-${code.theme} code-inline-${code.inlineStyle}`}
+            className={`article-body detail-desc ${codeClasses}`}
             dangerouslySetInnerHTML={{ __html: descHtml }}
           />
         ) : null}
