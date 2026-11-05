@@ -9,6 +9,7 @@ knav 是一个基于 Next.js 15 与 MySQL 8 的导航站 / 资源分享站点系
 - **软件下载**：按「软件 → 平台版本 → 镜像链接」三层维护，支持多平台、多架构与多个下载入口
 - **完整账号体系**：邮箱注册验证、找回密码、站内通知、收藏，以及 Telegram / GitHub / Gitee / Google 第三方登录
 - **独立数据表结构**：使用 `knav_*` 表存储数据；可从 knav、WordPress / OneNav、Typecho、Z-BlogPHP、Emlog、Halo 1.x 及常见导航站的数据库一次性导入存量内容
+- **多种部署方式**：裸机 systemd / PM2 / 1Panel、GitHub Actions 产物自动部署，或整镜像运行（自带 `Dockerfile` 与 compose，可附一套 MySQL 8.4）
 - **空仓库起步**：仓库只包含源码与默认静态资源（LOGO、内置头像），**不包含数据库数据与上传文件**；`public/uploads/` 为空且已排除，按「部署」一节初始化后是一个空站，只有创建的站长账号
 
 ---
@@ -135,6 +136,7 @@ knav 是一个基于 Next.js 15 与 MySQL 8 的导航站 / 资源分享站点系
 | 邮件 | nodemailer（SMTP） |
 | Markdown | marked + HTML 白名单过滤 |
 | 样式 | 原生 CSS 变量设计系统，无 UI 框架 |
+| 容器化 | `Dockerfile`（多阶段，standalone 产物）+ `compose.yaml`，`compose.mysql.yaml` 附 MySQL 8.4 |
 
 ---
 
@@ -293,6 +295,11 @@ scripts/
 public/
   avatars/        内置头像 SVG
   uploads/        素材库本地化后的文件（运行数据，不入库）
+Dockerfile        镜像构建（多阶段，standalone 产物）
+.dockerignore     构建上下文：排除 .env、node_modules、uploads、数据库导出等
+docker/
+  entrypoint.sh   容器入口：可选同步表结构后启动服务
+compose.yaml      应用编排；compose.mysql.yaml 附一套 MySQL 8.4
 ```
 
 ---
@@ -705,7 +712,26 @@ cd /opt/knav && bash scripts/deploy.sh --if-changed
 >
 > 自动部署要求服务器能访问 GitHub。若服务器无法访问 GitHub，可先配置代理或改用可访问的镜像源，否则只能按「11. 升级」手工上传构建。
 
-### 13. 备份与恢复
+### 13. Docker 部署（可选）
+
+不想在服务器上装 Node，也可以整镜像部署。仓库带 `Dockerfile`、`docker/entrypoint.sh`
+与两个 compose 文件：
+
+```bash
+cp .env.example .env      # 填 DB_* / SITE_URL / ADMIN_*
+docker compose up -d --build
+curl -s http://127.0.0.1:3000/api/health    # {"ok":true}
+```
+
+- 容器启动时自动执行表结构迁移（幂等，等价于 `npm run db:migrate`），空库首启即可用；
+  想手动控制迁移窗口就传 `KNAV_MIGRATE=0`
+- `public/uploads` 不打进镜像，必须挂卷持久化；bind mount 时目录要交给 uid 1000
+- 现网用的仍是「Actions 构建产物 + 服务器替换 `.next`」那条路，两者互不影响：
+  standalone 产物只在构建时设了 `NEXT_OUTPUT=standalone` 才生成
+
+端口、TLS、外部数据库、自带 MySQL、升级回滚与踩坑清单见 [docs/docker.md](docs/docker.md)。
+
+### 14. 备份与恢复
 
 ```bash
 # 备份
@@ -720,7 +746,7 @@ sudo systemctl restart knav
 
 建议把数据库与 `public/uploads/` 一起做每日定时备份；任意一个丢失都会造成图片或内容缺失。
 
-### 14. 常见问题
+### 15. 常见问题
 
 | 现象 | 排查方向 |
 |---|---|
@@ -737,6 +763,8 @@ sudo systemctl restart knav
 ## 已知边界
 
 - 自动部署为可选功能：配置 GitHub Actions 或 1Panel 计划任务后生效；未配置时按「11. 升级」手动发布
+- Docker 部署同样是可选项：只在有 Docker 的机器上用，构建阶段需要 1GB 以上内存；仓库只出 `Dockerfile`
+  与 compose，不往镜像仓库推（CI 未配置镜像仓库凭证）
 - 自动部署只同步代码；生产内容以生产数据库为准，本地开发库不会自动同步到生产
 - 第三方登录需要自行申请凭据并在后台填写后才能启用
 - 数据迁移支持 knav 自有库、WordPress / OneNav / WebStack、Typecho、Z-BlogPHP、Emlog、

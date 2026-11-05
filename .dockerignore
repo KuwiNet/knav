@@ -1,0 +1,48 @@
+# 构建上下文收窄：镜像层只装运行需要的东西。
+# 上下文里混着开发机残留（node_modules、构建缓存、素材、数据库导出），
+# 不排除会把几十 MB 本机数据塞进上下文，也可能把 Windows 的依赖带进 Linux 镜像。
+
+# 依赖与构建产物（镜像内由 npm ci + next build 重新生成）
+node_modules
+.next
+.next-build
+.next.prev
+.next-incoming
+.next-incoming.tar.gz
+out
+*.tsbuildinfo
+next-env.d.ts
+
+# 凭证：镜像里绝不能有 .env，配置全部通过环境变量注入；.env.example 留作参考
+.env
+.env.*
+!.env.example
+.deploy.env
+.deploy-ok
+.deps-lock
+
+# 本地开发运行时数据
+.devdata
+
+# 上传素材属运行数据，用卷挂载，不打进镜像
+public/uploads
+public/uploads.zip
+
+# 数据库导出与临时脚本
+*.sql
+!db/schema.sql
+*.sql.gz
+*.dump
+tmp
+
+# 仓库自用文件，镜像里用不到
+.git
+.gitignore
+.github
+Dockerfile
+.dockerignore
+compose.yaml
+compose.mysql.yaml
+docker/compose*
+docs
+README.md

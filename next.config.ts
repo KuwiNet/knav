@@ -5,6 +5,10 @@ const nextConfig: NextConfig = {
   // 自动部署时用 NEXT_DIST_DIR=.next-build 构建，成功后再整体替换 .next，
   // 避免构建过程覆盖正在运行的服务
   distDir: process.env.NEXT_DIST_DIR || ".next",
+  // Docker 镜像需要能 `node server.js` 直接跑起来的自包含产物，构建时设 NEXT_OUTPUT=standalone。
+  // 现网走的是「Actions 传 .next + next start」，不设这个变量时产物与现在完全一致，
+  // 也不会把 standalone 里那套 node_modules 一起打进部署包。
+  output: process.env.NEXT_OUTPUT === "standalone" ? "standalone" : undefined,
   // 关掉开发模式左下角的 Next.js 指示器（那个 "N" 按钮，界面是英文的，
   // 生产构建里本来就不存在，这里只影响本地 npm run dev）
   devIndicators: false,

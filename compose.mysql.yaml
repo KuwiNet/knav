@@ -1,0 +1,34 @@
+# 自带 MySQL 8.4 的覆盖文件，和主文件一起用：
+#   docker compose -f compose.yaml -f compose.mysql.yaml up -d
+# 已有外部数据库时不要加载这个文件，直接在 .env 里填 DB_HOST / DB_PORT / DB_USER / DB_PASS。
+
+services:
+  knav:
+    depends_on:
+      db:
+        # 等 db 健康再起应用，避免首启迁移连不上库；entrypoint 里迁移失败会直接退出
+        condition: service_healthy
+
+  db:
+    image: mysql:8.4
+    restart: unless-stopped
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    environment:
+      # MYSQL_DATABASE / MYSQL_USER 只在数据卷为空的第一次初始化时生效
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?用 compose.mysql.yaml 必须设置 MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME:-knav}
+      MYSQL_USER: ${DB_USER:-knav}
+      MYSQL_PASSWORD: ${DB_PASS:?用 compose.mysql.yaml 必须给应用账号设非空密码 DB_PASS}
+    volumes:
+      - mysqldata:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", 'mysqladmin ping -h 127.0.0.1 -u root -p"$${MYSQL_ROOT_PASSWORD}" --silent']
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 30s
+
+volumes:
+  mysqldata:

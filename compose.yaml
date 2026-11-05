@@ -1,0 +1,56 @@
+name: knav
+
+# knav 应用容器。数据库默认用同一网络中的 db 服务（见 compose.mysql.yaml）；
+# 用外部 MySQL（含现网的阿里云 RDS）时改 DB_HOST / DB_PORT 即可，不需要 db 服务。
+# 与自带 MySQL 一起起：docker compose -f compose.yaml -f compose.mysql.yaml up -d
+#
+# 这里的 ${VAR:-默认值} 会读同目录的 .env（compose 自动加载），
+# 也可以在 shell 里 export，两种方式都不要求 .env 必须存在。
+
+services:
+  knav:
+    build:
+      context: .
+    image: knav:local
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+
+      # 数据库：填了 DATABASE_URL（mysql://…）优先于 DB_*，两者都没填就连 db:3306
+      DATABASE_URL: ${DATABASE_URL:-}
+      DB_MODE: ${DB_MODE:-}
+      DB_HOST: ${DB_HOST:-db}
+      DB_PORT: ${DB_PORT:-3306}
+      DB_USER: ${DB_USER:-knav}
+      DB_PASS: ${DB_PASS:-}
+      DB_NAME: ${DB_NAME:-knav}
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
+
+      # 站点地址：邮件里的验证/找回密码链接以它为准，公网部署务必改成 https 域名
+      SITE_URL: ${SITE_URL:-http://localhost:3000}
+
+      # 首次建库时自动创建站长；已有站长后不会改名、提权或重置密码
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+
+      # 邮件；留空时不发信，只写 knav_mail_log
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-knav}
+
+      # 1=启动时自动同步表结构；升级想手动控制迁移窗口时传 0
+      KNAV_MIGRATE: ${KNAV_MIGRATE:-1}
+
+    volumes:
+      # 上传素材与图片本地化的落盘位置。命名卷会继承镜像里的属主（node，uid 1000），
+      # 换成 bind mount 时记得把宿主机目录 chown 成 1000:1000。
+      - uploads:/app/public/uploads
+
+volumes:
+  uploads:
