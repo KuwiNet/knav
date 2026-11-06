@@ -6,7 +6,8 @@
 # 同时在仓库 Secrets 里加 DOCKERHUB_USERNAME / DOCKERHUB_TOKEN（不加就只推 GHCR）。
 #
 # 触发：打 v* tag 时自动跑；也可在 Actions 页面手动运行（workflow_dispatch）。
-# 产物 tag：<版本>（如 0.1.4）、latest（仅 tag 触发）、分支名（手动运行）。
+# 产物 tag：<版本>（如 0.1.4）、latest（tag 与默认分支都打）、分支名（手动运行）。
+# 没有 DOCKERHUB_USERNAME 这个 Secret 时只推 GHCR，Hub 那步会跳过并打印跳过原因。
 
 name: Publish container image
 
@@ -36,6 +37,10 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # Secret 不能直接写在 if 里比较（secrets 上下文在部分场景取不到值），
+      # 先落到 job 级 env，再用它判断有没有配 Hub 凭据
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
     steps:
       - uses: actions/checkout@v4
 
@@ -55,7 +60,10 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=ref,event=tag
             type=ref,event=branch
+            # latest 两条都要：一键安装脚本默认拉 kuwinet/knav:latest，
+            # 而 metadata 的 {{is_default_branch}} 在 tag 事件下是 false，光靠它推不出 latest
             type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
 
       - name: 登录 Docker Hub
         if: ${{ env.DOCKERHUB_USERNAME != '' }}
