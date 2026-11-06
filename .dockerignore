@@ -44,6 +44,9 @@ Dockerfile
 compose.yaml
 compose.mysql.yaml
 compose.host.yaml
+compose.mariadb.yaml
 docker/compose*
+docker/install.sh
+docker/docker-publish.yml
 docs
 README.md

@@ -11,7 +11,8 @@ services:
   knav:
     build:
       context: .
-    image: knav:local
+    # 本地构建时用默认的 knav:local；一键安装脚本会把它指到镜像仓库（KNAV_IMAGE）
+    image: ${KNAV_IMAGE:-knav:local}
     restart: unless-stopped
     # 数据库在宿主机时，DB_HOST 填 host.docker.internal 就能通（Docker 20.10+）。
     # 容器里的 127.0.0.1 指向容器自己，填 127.0.0.1 一定连不上宿主机的库。

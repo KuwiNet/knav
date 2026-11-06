@@ -1,0 +1,40 @@
+# 自带 MariaDB 11 的覆盖文件，和主文件一起用：
+#   docker compose -f compose.yaml -f compose.mariadb.yaml up -d
+#
+# 与 compose.mysql.yaml 二选一，不要同时加载（两个都定义 db 服务，会互相覆盖）。
+# 表结构两边通用：db/schema.sql 只用 CREATE TABLE IF NOT EXISTS + InnoDB + utf8mb4_unicode_ci，
+# 没有 MySQL 8 专属语法（无 JSON 函数、无窗口函数、无 CTE），MariaDB 10.6+ 直接可用。
+#
+# 应用侧的 DB_* 与 MySQL 版完全一样，不用改 .env。
+
+services:
+  knav:
+    depends_on:
+      db:
+        # 等 db 健康再起应用，避免首启迁移连不上库；entrypoint 里迁移失败会直接退出
+        condition: service_healthy
+
+  db:
+    image: mariadb:11
+    restart: unless-stopped
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    environment:
+      # MYSQL_DATABASE / MYSQL_USER 只在数据卷为空的第一次初始化时生效
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?用 compose.mariadb.yaml 必须设置 MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME:-knav}
+      MYSQL_USER: ${DB_USER:-knav}
+      MYSQL_PASSWORD: ${DB_PASS:?用 compose.mariadb.yaml 必须给应用账号设非空密码 DB_PASS}
+    volumes:
+      - mariadbdata:/var/lib/mysql
+    healthcheck:
+      # MariaDB 镜像里是 mariadb-admin（mysqladmin 只是同名软链，别依赖它）
+      test: ["CMD-SHELL", 'mariadb-admin ping -h 127.0.0.1 -u root -p"$${MYSQL_ROOT_PASSWORD}" --silent']
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 30s
+
+volumes:
+  mariadbdata:

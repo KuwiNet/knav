@@ -1,7 +1,9 @@
 # Docker 部署
 
-仓库自带 `Dockerfile`、`.dockerignore`、`docker/entrypoint.sh`、`compose.yaml`
-与 `compose.mysql.yaml`，一条 `docker compose up -d --build` 就能起站。
+仓库自带 `Dockerfile`、`.dockerignore`、`docker/entrypoint.sh`、`docker/install.sh`，
+以及 `compose.yaml` 加三份覆盖文件（`compose.mysql.yaml` 带 MySQL 8.4、`compose.mariadb.yaml`
+带 MariaDB 11、`compose.host.yaml` 对接宿主机已有的库）。
+最省事的是第 2.1 节的一行命令安装，其次是一条 `docker compose up -d --build`。
 
 > **和现网另一条部署路径的关系**
 > README 的「自动部署（可选）」是 **GitHub Actions 构建 `.next` 产物、服务器只替换产物并重启**
@@ -19,7 +21,7 @@
 | Docker Compose | v2，即 `docker compose` 子命令 |
 | 架构 | amd64 / arm64 均可，没有架构相关的原生依赖 |
 | 内存 | 运行 300MB 起；**构建阶段建议 1GB 以上**（`next build` 有峰值），内存不够就在别处构建再拉镜像 |
-| 数据库 | 外部 MySQL 8.0+，或用附带的 `compose.mysql.yaml` |
+| 数据库 | 外部 MySQL 8.0+ / MariaDB 10.6+，或用附带的 `compose.mysql.yaml`、`compose.mariadb.yaml` |
 
 运行层基于 `node:22-alpine`，只含 standalone 产物 + Next/React 运行时；
 `mysql2`、`bcryptjs`、`nodemailer` 等已被 webpack 打进服务端 chunk，不再单独占一层。
@@ -28,7 +30,38 @@
 
 ## 2. 用 compose 起站（推荐）
 
-### 2.1 用外部数据库（含现网的云 RDS）
+### 2.1 一行命令安装（不用 clone 仓库）
+
+`docker/install.sh` 把应用和数据库都跑在 Docker 里，自动生成口令、探测站点地址、等健康检查，
+装完直接给访问地址和站长口令：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/KuwiNet/knav/main/docker/install.sh | sudo bash
+```
+
+需要改默认值时用环境变量（管道执行传不了命令行参数）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/KuwiNet/knav/main/docker/install.sh | sudo KNAV_DB=mariadb KNAV_PORT=8080 bash
+```
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `KNAV_DB` | `mysql` | `mysql`（8.4）或 `mariadb`（11），两份覆盖文件二选一 |
+| `KNAV_PORT` | `3000` | 宿主对外端口，被占用时脚本会先拦下来并提示换 |
+| `KNAV_DIR` | `/opt/knav` | 放 compose 文件与 `.env` 的目录 |
+| `KNAV_IMAGE` | `kuwinet/knav:latest` | 应用镜像；仓库命名空间不同或想用本地构建的镜像时改它 |
+| `KNAV_SITE_URL` | 自动探测 | 探测不到本机地址时手动给，例如 `https://nav.example.com` |
+| `KNAV_ADMIN_EMAIL` | 空 | 留空时站长邮箱落成 `admin@knav.local`，配 SMTP 前记得在后台改 |
+| `KNAV_FORCE` | `0` | `1` 才重新生成 `.env`；数据卷已存在时新库口令不会写进已建好的库 |
+
+脚本只做四件事：查 Docker、下载 compose 文件、生成 `.env`（权限 0600）、`compose up -d`。
+不装 Docker、不动宿主机上已有的数据库、不删任何已有容器；同名容器或端口被占都会先报错退出而不是半路失败。
+站长口令随机生成、只在结束时打印一次，之后要去看 `.env`。
+
+镜像来自 Docker Hub（见第 2.6 节）。还没推仓库的机器可以 `KNAV_IMAGE=knav:local` 配合第 3 节本地构建。
+
+### 2.2 用外部数据库（含现网的云 RDS）
 
 ```bash
 git clone https://github.com/KuwiNet/knav.git && cd knav
@@ -39,20 +72,23 @@ docker compose up -d --build
 compose 读同目录的 `.env` 做变量插值，容器配置全部来自环境变量。
 **`.env` 不会进镜像**：`.dockerignore` 排除了 `.env*`（只保留 `.env.example`）。
 
-### 2.2 连数据库一起起
+### 2.3 连数据库一起起
 
 先在 `.env` 里补 `MYSQL_ROOT_PASSWORD` 和 `DB_PASS`（应用账号密码，两者都不能为空），然后：
 
 ```bash
 docker compose -f compose.yaml -f compose.mysql.yaml up -d --build
+docker compose -f compose.yaml -f compose.mariadb.yaml up -d --build   # 想用 MariaDB 11
 ```
 
-- `db` 是 `mysql:8.4`，数据在命名卷 `mysqldata`
+- `db` 是 `mysql:8.4`（数据卷 `mysqldata`）或 `mariadb:11`（数据卷 `mariadbdata`），两份文件二选一、别同时加载
+- 表结构两边通用：`db/schema.sql` 只用 `CREATE TABLE IF NOT EXISTS` + InnoDB + `utf8mb4_unicode_ci`，
+  没有 MySQL 8 专属语法（无 JSON 函数、无窗口函数、无 CTE），应用侧的 `DB_*` 也不用改
 - `MYSQL_DATABASE` / `MYSQL_USER` / `MYSQL_PASSWORD` 只在**数据卷为空的首次初始化**生效，
   之后改 `.env` 不会同步到已建好的库
 - 应用等 `db` 健康检查通过才启动，首启迁移不会撞上「库还没就绪」
 
-### 2.3 数据库装在宿主机（自装 MariaDB / 1Panel 的库）
+### 2.4 数据库装在宿主机（自装 MariaDB / 1Panel 的库）
 
 宿主机自己装的 MySQL 通常只监听 `127.0.0.1`，账号也只授权 `localhost`。桥接容器进不了这个监听地址，
 源 IP 还会被授权主机拒掉，只能同时改 `bind-address` 和授权网段（见第 9 节）。
@@ -67,7 +103,7 @@ docker compose -f compose.yaml -f compose.host.yaml up -d --build
 之前用 `docker run` 起过站的，加 `KNAV_UPLOADS_VOLUME=<原卷名>` 才能接着用已有素材，否则会换到一个新空卷。
 另外 host 网络的入站要过防火墙，`ufw` 为 active 的机器见第 9 节最后一条。
 
-### 2.4 验证
+### 2.5 验证
 
 ```bash
 docker compose ps                                 # knav 应为 healthy
@@ -75,8 +111,31 @@ curl -s http://127.0.0.1:3000/api/health           # {"ok":true}
 docker compose logs knav | head                    # 看到「迁移完成: knav」
 ```
 
+首页 200 不代表样式在，再取一次首页引用的 CSS 请求回来：
+
+```bash
+CSS=$(curl -s http://127.0.0.1:3000/ | grep -o '/_next/static/css/[^"]*' | head -1)
+curl -s -o /dev/null -w "$CSS -> %{http_code}\n" "http://127.0.0.1:3000$CSS"   # 要 200
+```
+
 浏览器打开 `http://服务器IP:3000`，用 `.env` 里的 `ADMIN_USERNAME` / `ADMIN_PASSWORD` 登录后台，
 登录后**先改密码**，再到「站点设置 → 基础信息」确认站点地址（邮件里的验证与找回密码链接以它为准）。
+
+### 2.6 镜像仓库
+
+`docker/docker-publish.yml` 是多架构（amd64/arm64）构建推送工作流，同时推 **Docker Hub** 和 **GHCR**：
+GHCR 用自带的 `GITHUB_TOKEN`，不需要任何配置；Docker Hub 需要仓库 Secrets `DOCKERHUB_USERNAME`
+和 `DOCKERHUB_TOKEN`（没有这两个 Secret 时工作流跳过 Hub 登录，只推 GHCR）。
+
+这个文件放在 `docker/` 而不是 `.github/workflows/`：**维护本仓库的 API token 没有 `workflow` 权限**，
+机器人提交 `.github/workflows/*` 会被 GitHub 拒绝。启用方法是人工把文件复制过去并提交一次：
+
+```bash
+cp docker/docker-publish.yml .github/workflows/docker-publish.yml   # 需要你手动提交这一次
+```
+
+之后打 `v*` tag 自动发布，也可在 Actions 页面手动运行。镜像命名空间默认 `kuwinet/knav`，
+改动时要同步 `docker/install.sh` 里的 `KNAV_IMAGE` 默认值。
 
 ---
 
@@ -382,3 +441,15 @@ compose 只在 `up -d` 时重算环境变量，改完执行 `docker compose up -
   回环与局域网 IP 的 `/api/health` 都是 200（`ufw` 放行 `192.168.100.0/24` 之后才通，见第 9 节）
 
 镜像推仓库需要额外的镜像仓库凭证，本仓库没有为此改 CI。
+
+**一键安装脚本**（开发机无 Docker，用桩程序 `docker`/`curl`/`ip`/`ss`/`openssl` 跑完整流程验证）：
+
+- `mysql` 与 `mariadb` 两条分支各自只下载/引用对应的覆盖文件，卷名 `knav_mysqldata` / `knav_mariadbdata` 正确
+- 首次安装生成 `.env`（三个口令各自独立、`SITE_URL` 取 `ip route get` 的 src、`ADMIN_EMAIL` 留空）
+- 已有 `.env` 时沿用并明确说「本次没有重置」；`KNAV_FORCE=1` 且数据卷存在时先警告再重新生成
+- 同名容器、端口被占用两种前置冲突都提前退出，不会走到 `up -d`
+- 收尾会回取首页引用的 CSS 再请求一次，非 200 直接失败退出（就是镜像里那个 static 目录坑）
+
+**仍未在真机验证**：`install.sh` 对真实 Docker 的执行、`compose.mariadb.yaml` 起 MariaDB 11 跑迁移、
+以及 `docker/docker-publish.yml` 推镜像（需要 Hub 凭证 + 人工把文件放进 `.github/workflows/`）。
+第 2.1 节列的默认值（命名空间 `kuwinet/knav`）以实际推上去的仓库为准。

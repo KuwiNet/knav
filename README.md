@@ -9,7 +9,7 @@ knav 是一个基于 Next.js 15 与 MySQL 8 的导航站 / 资源分享站点系
 - **软件下载**：按「软件 → 平台版本 → 镜像链接」三层维护，支持多平台、多架构与多个下载入口
 - **完整账号体系**：邮箱注册验证、找回密码、站内通知、收藏，以及 Telegram / GitHub / Gitee / Google 第三方登录
 - **独立数据表结构**：使用 `knav_*` 表存储数据；可从 knav、WordPress / OneNav、Typecho、Z-BlogPHP、Emlog、Halo 1.x 及常见导航站的数据库一次性导入存量内容
-- **多种部署方式**：裸机 systemd / PM2 / 1Panel、GitHub Actions 产物自动部署，或整镜像运行（自带 `Dockerfile` 与 compose，可附一套 MySQL 8.4）
+- **多种部署方式**：裸机 systemd / PM2 / 1Panel、GitHub Actions 产物自动部署，或整镜像运行（自带 `Dockerfile` 与 compose，可附 MySQL 8.4 / MariaDB 11，`docker/install.sh` 一行命令装完）
 - **空仓库起步**：仓库只包含源码与默认静态资源（LOGO、内置头像），**不包含数据库数据与上传文件**；`public/uploads/` 为空且已排除，按「部署」一节初始化后是一个空站，只有创建的站长账号
 
 ---
@@ -136,7 +136,7 @@ knav 是一个基于 Next.js 15 与 MySQL 8 的导航站 / 资源分享站点系
 | 邮件 | nodemailer（SMTP） |
 | Markdown | marked + HTML 白名单过滤 |
 | 样式 | 原生 CSS 变量设计系统，无 UI 框架 |
-| 容器化 | `Dockerfile`（多阶段，standalone 产物）+ `compose.yaml`，`compose.mysql.yaml` 附 MySQL 8.4，`compose.host.yaml` 对接宿主机已有的库 |
+| 容器化 | `Dockerfile`（多阶段，standalone 产物）+ `compose.yaml`，`compose.mysql.yaml` 附 MySQL 8.4，`compose.mariadb.yaml` 附 MariaDB 11，`compose.host.yaml` 对接宿主机已有的库，`docker/install.sh` 一行命令装完 |
 
 ---
 
@@ -299,7 +299,9 @@ Dockerfile        镜像构建（多阶段，standalone 产物）
 .dockerignore     构建上下文：排除 .env、node_modules、uploads、数据库导出等
 docker/
   entrypoint.sh   容器入口：可选同步表结构后启动服务
-compose.yaml      应用编排；compose.mysql.yaml 附一套 MySQL 8.4；compose.host.yaml 走 host 网络对接宿主机的库
+  install.sh      一行命令安装：生成 .env、起应用 + 数据库、等健康并打印口令
+  docker-publish.yml 镜像发布工作流（需人工复制到 .github/workflows/ 启用）
+compose.yaml      应用编排；compose.mysql.yaml 附 MySQL 8.4，compose.mariadb.yaml 附 MariaDB 11；compose.host.yaml 走 host 网络对接宿主机的库
 ```
 
 ---
@@ -714,8 +716,16 @@ cd /opt/knav && bash scripts/deploy.sh --if-changed
 
 ### 13. Docker 部署（可选）
 
-不想在服务器上装 Node，也可以整镜像部署。仓库带 `Dockerfile`、`docker/entrypoint.sh`
-与三个 compose 文件（默认那份、附 MySQL 8.4 的那份、对接宿主机数据库的 `compose.host.yaml`）：
+不想在服务器上装 Node，也可以整镜像部署。最省事的是**一行命令**：应用和数据库都跑在 Docker 里，
+自动生成口令与站点地址，装完直接打印访问地址和站长密码：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/KuwiNet/knav/main/docker/install.sh | sudo bash
+# 换 MariaDB、换端口：sudo KNAV_DB=mariadb KNAV_PORT=8080 bash 同上
+```
+
+仓库带 `Dockerfile`、`docker/entrypoint.sh`、`docker/install.sh` 与四份 compose 文件
+（默认那份、MySQL 8.4、MariaDB 11、对接宿主机数据库的 `compose.host.yaml`）。手动方式：
 
 ```bash
 cp .env.example .env      # 填 DB_* / SITE_URL / ADMIN_*
