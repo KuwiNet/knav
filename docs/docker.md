@@ -225,7 +225,42 @@ docker compose cp knav:/app/public/uploads /root/knav-uploads-$(date +%F)
 刷屏是因为 `restart: unless-stopped` 会在迁移失败后不断重启，先 `docker stop <容器>`
 或 `docker compose stop` 停住再改配置。
 
-**容器起来了但 `/api/health` 返回 `{"ok":false}` 或一直是 unhealthy**
+**用 `--network host` 时端口对公网可达**
+host 网络下应用直接绑宿主的 `0.0.0.0:PORT`，公网机器上等于把站点（包括 `/login`）直接暴露出去。
+只想本地验证时改回桥接、把端口只绑回环，再由反向代理出口访问：
+
+```bash
+docker rm -f knav && docker run -d --name knav --restart unless-stopped \
+  -p 127.0.0.1:3001:3000 --add-host=host.docker.internal:host-gateway \
+  -e DB_HOST=host.docker.internal --env-file /root/knav/.env \
+  -v knav-uploads:/app/public/uploads knav:local
+```
+
+这条路要求 `DB_HOST=host.docker.internal`（`.env` 里也要一起改），因为容器内的 `127.0.0.1` 已经不是宿主机了。
+
+**`Access denied for user 'knav'@'localhost' (using password: YES)`**
+网络和端口已经通了，是账号认证失败。先分清三种情况：
+
+```bash
+sudo mysql -e "SELECT user,host,plugin,authentication_string<>'' AS has_pw FROM mysql.user WHERE user='knav';"
+```
+
+- `plugin=unix_socket`：这个账号不能走密码认证，用 `ALTER USER ... IDENTIFIED BY '密码'` 重建为 `mysql_native_password`
+- `has_pw=1` 但仍被拒：`.env` 里的密码和库里的不一致。`CREATE USER IF NOT EXISTS` 对**已存在的账号不会改密码**，
+  所以先前用占位符建过一次之后，后面的密码改动会被静默跳过——用 `ALTER USER` 显式改
+- `.env` 里是占位符没替换：`awk -F= '/^DB_PASS/{print length($2)}' .env` 看长度，正常应该和你设的一致
+
+改完用 `.env 里的值`做非交互验证，通过了再重建容器（`--env-file` 只在创建时读一次，`docker restart` 不会重新读）：
+
+```bash
+mysql -u knav -p"$(awk -F= '/^DB_PASS/{print $2}' /root/knav/.env)" -h 127.0.0.1 knav -e "SELECT 1;"
+```
+
+密码里避开 `$` `&` `!` `#` 和引号、空格：`--env-file` 不剥引号、`sed` 会把 `&` 当整个匹配，
+这类字符会让「明明填了却认证失败」。`ADMIN_PASSWORD` 非空但少于 8 位时迁移直接报错退出，
+表现和连不上库一样是重启循环。
+
+**`/api/health` 返回 `{"ok":false}` 或一直是 unhealthy**
 连不上数据库。`docker compose logs knav` 里分辨：
 `ECONNREFUSED` 是 host/port 不对或 db 未就绪；`Access denied` 是账号密码或授权主机不对；
 `Unknown database` 是库名不对。自建 MySQL 8 默认的 `caching_sha2_password` 不需要额外参数——
@@ -269,5 +304,11 @@ compose 只在 `up -d` 时重算环境变量，改完执行 `docker compose up -
   uploads 不可写只告警不阻塞启动
 - 两个 compose 文件 YAML 解析通过，服务与卷的键位正确
 
-**未验证**：`docker build` 与容器内实际运行（开发机没装 Docker）。第一次在有 Docker 的机器上构建时，
-请留意 `npm ci` 与 `next build` 两步的输出；镜像推仓库需要额外的镜像仓库凭证，本仓库没有为此改 CI。
+**真机验证**（2026-11-07，Debian + 宿主机 MariaDB，`docker build` 出的 `knav:local`）：
+
+- 迁移在容器内跑通，建出 19 张 `knav_*` 表，随后 `node server.js` 启动，日志 `▲ Next.js 15.5.28` / `✓ Ready in 211ms`
+- 首次失败依次暴露了三类问题，都已写进上面第 9 节：容器内 `127.0.0.1` 连不到宿主库 → 账号密码被
+  `CREATE USER IF NOT EXISTS` 跳过 → `.env` 里 `DB_PASS` 还是占位符
+- 上传目录用命名卷 `-v knav-uploads:/app/public/uploads` 挂载，无「不可写」告警
+
+镜像推仓库需要额外的镜像仓库凭证，本仓库没有为此改 CI。
