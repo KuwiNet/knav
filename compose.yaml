@@ -13,6 +13,10 @@ services:
       context: .
     image: knav:local
     restart: unless-stopped
+    # 数据库在宿主机时，DB_HOST 填 host.docker.internal 就能通（Docker 20.10+）。
+    # 容器里的 127.0.0.1 指向容器自己，填 127.0.0.1 一定连不上宿主机的库。
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "${PORT:-3000}:3000"
     environment:

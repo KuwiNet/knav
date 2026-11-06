@@ -210,6 +210,21 @@ docker compose cp knav:/app/public/uploads /root/knav-uploads-$(date +%F)
 `RUN apt-get update && apt-get install -y --no-install-recommends tzdata && rm -rf /var/lib/apt/lists/*`。
 应用本身没有原生依赖，两种基镜像都能跑。
 
+**`迁移失败: connect ECONNREFUSED 127.0.0.1:3306`（然后一直重启）**
+容器里的 `127.0.0.1` 是**容器自己**，不是宿主机。启动日志第二行会打印生效的库地址，按它改：
+
+| 数据库在哪 | 怎么填 |
+|---|---|
+| 宿主机（含 1Panel 映射到宿主端口的 MySQL） | `DB_HOST=host.docker.internal`；compose 走内置的 `extra_hosts: ["host.docker.internal:host-gateway"]`，`docker run` 需要自己加 `--add-host=host.docker.internal:host-gateway` |
+| 另一个数据库容器 | 两个容器加入同一网络，`DB_HOST` 填它的服务名 |
+| 外部 / 云数据库 | `DB_HOST` 填实际地址，容器网络要能出得去 |
+
+另外 **1Panel 新建的 MySQL 默认只监听宿主机 `127.0.0.1`**（未开「端口外网访问」），
+这种情况即使填宿主 IP 也连不上，要么放开监听，要么让两个容器走同一网络用服务名访问。
+
+刷屏是因为 `restart: unless-stopped` 会在迁移失败后不断重启，先 `docker stop <容器>`
+或 `docker compose stop` 停住再改配置。
+
 **容器起来了但 `/api/health` 返回 `{"ok":false}` 或一直是 unhealthy**
 连不上数据库。`docker compose logs knav` 里分辨：
 `ECONNREFUSED` 是 host/port 不对或 db 未就绪；`Access denied` 是账号密码或授权主机不对；
