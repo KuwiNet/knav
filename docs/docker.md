@@ -51,13 +51,30 @@ curl -fsSL https://raw.githubusercontent.com/KuwiNet/knav/main/docker/install.sh
 | `KNAV_PORT` | `3000` | 宿主对外端口，被占用时脚本会先拦下来并提示换 |
 | `KNAV_DIR` | `/opt/knav` | 放 compose 文件与 `.env` 的目录 |
 | `KNAV_IMAGE` | `kuwinet/knav:latest` | 应用镜像；仓库命名空间不同或想用本地构建的镜像时改它 |
-| `KNAV_SITE_URL` | 自动探测 | 探测不到本机地址时手动给，例如 `https://nav.example.com` |
+| `KNAV_SITE_URL` | 自动探测 | 公网地址 > 内网地址 > `127.0.0.1`；有域名就直接给域名，例如 `https://nav.example.com` |
 | `KNAV_ADMIN_EMAIL` | 空 | 留空时站长邮箱落成 `admin@knav.local`，配 SMTP 前记得在后台改 |
 | `KNAV_FORCE` | `0` | `1` 才重新生成 `.env`；数据卷已存在时新库口令不会写进已建好的库 |
 
 脚本只做四件事：查 Docker、下载 compose 文件、生成 `.env`（权限 0600）、`compose up -d`。
 不装 Docker、不动宿主机上已有的数据库、不删任何已有容器；同名容器或端口被占都会先报错退出而不是半路失败。
 站长口令随机生成、只在结束时打印一次，之后要去看 `.env`。
+
+结束时按宝塔那种样式把地址列全，直接点就能用：
+
+```
+✓ knav 已就绪
+  本机访问   http://127.0.0.1:3000
+  访问地址   http://192.168.100.18:3000      （内网）
+             http://203.0.113.9:3000      （公网；需已把 3000 放行或映射到本机）
+  站点地址   http://203.0.113.9:3000   （公网优先，没有用内网；后台「站点设置 → 基础信息」可覆盖）
+  站长账号   admin
+  初始密码   68f49d113fd6829701789b6f418e3ed9   ← 只打印这一次，登录后立刻改掉
+```
+
+公网地址是问三个外部服务拿的（`ifconfig.me` / `api.ipify.org` / `ipinfo.io`，各 3 秒上限），
+返回私网段一律不算公网，所以 NAT 后面的机器只会显示内网那一行；机器没有外网出口时探测会在十几秒内放弃，
+站点地址退回 `127.0.0.1`。注意探测到公网地址 ≠ 外面真能进来，还得路由器做端口映射或云安全组放行；
+有域名的话用 `KNAV_SITE_URL=https://nav.example.com` 覆盖，比 IP 更稳（证书、SEO、换 IP 都不用再改）。
 
 镜像来自 Docker Hub（见第 2.6 节）。还没推仓库的机器可以 `KNAV_IMAGE=knav:local` 配合第 3 节本地构建。
 
@@ -456,10 +473,15 @@ compose 只在 `up -d` 时重算环境变量，改完执行 `docker compose up -
 **一键安装脚本**（开发机无 Docker，用桩程序 `docker`/`curl`/`ip`/`ss`/`openssl` 跑完整流程验证）：
 
 - `mysql` 与 `mariadb` 两条分支各自只下载/引用对应的覆盖文件，卷名 `knav_mysqldata` / `knav_mariadbdata` 正确
-- 首次安装生成 `.env`（三个口令各自独立、`SITE_URL` 取 `ip route get` 的 src、`ADMIN_EMAIL` 留空）
+- 首次安装生成 `.env`（三个口令各自独立、`ADMIN_EMAIL` 留空）；站点地址按「公网 > 内网 > 127.0.0.1」写入
+- 地址探测五种情形都跑过：内网+公网（两行都显示，站点地址取公网）、探测值其实等于内网（被私网段过滤掉，只显示内网一行）、
+  `ip` 无输出、完全没有 `ip` 命令、已有 `.env`（`.env` 里的旧站点地址不被探测结果覆盖）
 - 已有 `.env` 时沿用并明确说「本次没有重置」；`KNAV_FORCE=1` 且数据卷存在时先警告再重新生成
 - 同名容器、端口被占用两种前置冲突都提前退出，不会走到 `up -d`
 - 收尾会回取首页引用的 CSS 再请求一次，非 200 直接失败退出（就是镜像里那个 static 目录坑）
+- 加探测时顺带修掉一个会致命的写法：`set -o pipefail` 下 `LAN_IP="$(ip ... | sed ... | head -1)"` 在 `ip` 缺失时
+  赋值本身就失败，脚本会在「服务已起、健康检查已过」的位置直接退出——现在三处探测一律 `\|\| true`，
+  CSS 状态码取值同样补了 `\|\| true`
 
 **仍未在真机验证**：`install.sh` 对真实 Docker 的执行（含从 Hub 拉 `kuwinet/knav:latest` 后首启建库）、
 `compose.mariadb.yaml` 起 MariaDB 11 跑迁移。第 2.1 节列的默认值（命名空间 `kuwinet/knav`）已与实际推上去的仓库核对一致。

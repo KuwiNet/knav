@@ -7,8 +7,8 @@
 # 需要参数时用环境变量（管道执行没法带命令行参数）：
 #   curl -fsSL .../install.sh | sudo KNAV_DB=mariadb KNAV_PORT=8080 bash
 #
-# 做的事：检查 Docker → 下载 compose 文件 → 生成 .env（随机密码、自动探测站点地址）
-#   → 拉镜像 → 起服务 → 等健康并回取一次 CSS → 打印访问地址与站长口令。
+# 做的事：检查 Docker → 下载 compose 文件 → 生成 .env（随机密码、探测站点地址）
+#   → 拉镜像 → 起服务 → 等健康并回取一次 CSS → 打印本机/内网/公网访问地址与站长口令。
 # 不做的事：不装 Docker、不改宿主数据库、不删任何已有容器。
 
 set -euo pipefail
@@ -68,6 +68,30 @@ done
 ENV_FILE="$KNAV_DIR/.env"
 ADMIN_PASSWORD=""
 PW_FRESH=0
+
+# 内网地址：默认路由的 src 最可靠（多网卡时它就是对外那张卡），拿不到就退到第一个全局 IPv4
+lan_ip() { ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p' | head -1; }
+lan_ip_fallback() { ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1; }
+# 公网出口地址：任一探测服务返回 IPv4 即算，全失败（内网无出口/探测被墙）就返回空。
+# 三个服务各 3 秒上限，所以断外网的机器最多慢 9 秒，不会挂住。
+public_ip() {
+  local u v
+  for u in https://ifconfig.me/ip https://api.ipify.org https://ipinfo.io/ip; do
+    v="$(curl -fsS -m 3 "$u" 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1 || true)"
+    # 回环/私网/链路本地一律不算公网：NAT 后面探测到的往往就是内网地址，拿去当站点地址会骗人
+    case "$v" in
+      '' | 127.* | 10.* | 169.254.* | 192.168.* | 172.1[6-9].* | 172.2[0-9].* | 172.3[01].*) continue ;;
+      *) printf '%s' "$v"; return 0 ;;
+    esac
+  done
+  return 0
+}
+# 三个探测都要 || true：set -o pipefail 下，ip 命令缺失或没默认路由会让赋值本身失败，
+# 脚本会在「装完并已通过健康检查」的位置直接退出（旧版结尾那行就是这么炸的）
+LAN_IP="$(lan_ip || true)"
+[ -n "$LAN_IP" ] || LAN_IP="$(lan_ip_fallback || true)"
+PUB_IP="$(public_ip || true)"
+
 # 沿用旧配置时这些值要从 .env 里读回来，否则结尾打印的是空
 env_get() { sed -n "s/^$1=//p" "$ENV_FILE" | head -1; }
 if [ -f "$ENV_FILE" ] && [ "$KNAV_FORCE" != "1" ]; then
@@ -88,9 +112,9 @@ else
     else od -An -tx1 -N16 /dev/urandom | tr -d ' \n'; fi
   }
   if [ -z "$KNAV_SITE_URL" ]; then
-    # 探测本机主地址；ip 命令缺失或没有默认路由时宁可退回回环，也不要拼出 http://:3000
-    DETECTED_IP="$(ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p' | head -1)"
-    KNAV_SITE_URL="http://${DETECTED_IP:-127.0.0.1}:$KNAV_PORT"
+    # 站点地址优先公网，其次内网，都没有就退回环；探测不到绝不能拼出 http://:3000
+    SITE_IP="${PUB_IP:-${LAN_IP:-127.0.0.1}}"
+    KNAV_SITE_URL="http://$SITE_IP:$KNAV_PORT"
   fi
   ADMIN_PASSWORD="$(gen_pw)"
 
@@ -110,7 +134,8 @@ DB_PASS=$(gen_pw)
 DB_NAME=knav
 MYSQL_ROOT_PASSWORD=$(gen_pw)
 
-# 站点地址：邮件里的验证/找回密码链接、LOGO、图标、sitemap 都以它为准
+# 站点地址：外发邮件里的验证/找回密码链接、OG 图、sitemap、OAuth 回调都以它为准
+# 安装时按「公网 > 内网 > 127.0.0.1」探测；后台「站点设置 → 站点地址」里存过值就以数据库为准，这里会被忽略
 SITE_URL=$KNAV_SITE_URL
 
 # 首次建库时创建站长；已有站长后不会再改。登录后台请立即换密码
@@ -153,15 +178,20 @@ done
 # 首页 200 不代表样式在：standalone 的 static 挂错目录时只有 /_next/static/** 会 404
 CSS="$(curl -fsS -m 5 "http://127.0.0.1:$KNAV_PORT/" | grep -o '/_next/static/css/[^"]*' | head -1 || true)"
 if [ -n "$CSS" ]; then
-  code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$KNAV_PORT$CSS")"
-  [ "$code" = 200 ] || die "样式文件 $CSS 返回 $code，镜像里的 static 目录不对，见 docs/docker.md 第 9 节"
+  code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$KNAV_PORT$CSS" || true)"
+  [ "$code" = 200 ] || die "样式文件 $CSS 返回 ${code:-无响应}，镜像里的 static 目录不对，见 docs/docker.md 第 9 节"
 fi
 
-LAN_IP="$(ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p' | head -1)"
 printf '\n\033[1;32m✓ knav 已就绪\033[0m\n'
 echo "  本机访问   http://127.0.0.1:$KNAV_PORT"
-if [ -n "$LAN_IP" ]; then echo "  局域网     http://$LAN_IP:$KNAV_PORT"; fi
-echo "  站点地址   $KNAV_SITE_URL   （后台「站点设置 → 基础信息」可覆盖）"
+if [ -n "$PUB_IP" ]; then
+  # 有公网出口就两条都列出来；公网地址能不能从外面进来还取决于路由/云安全组，这里提示一句
+  echo "  访问地址   http://${LAN_IP:-$PUB_IP}:$KNAV_PORT      （内网）"
+  echo "             http://$PUB_IP:$KNAV_PORT      （公网；需已把 $KNAV_PORT 放行或映射到本机）"
+elif [ -n "$LAN_IP" ]; then
+  echo "  访问地址   http://$LAN_IP:$KNAV_PORT      （内网）"
+fi
+echo "  站点地址   $KNAV_SITE_URL   （公网优先，没有用内网；后台「站点设置 → 基础信息」可覆盖）"
 echo "  站长账号   $KNAV_ADMIN_USER"
 if [ "$PW_FRESH" = 1 ]; then
   echo "  初始密码   $ADMIN_PASSWORD   ← 只打印这一次，登录后立刻改掉"
