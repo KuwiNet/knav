@@ -257,6 +257,19 @@ docker rm -f knav && docker run -d --name knav --restart unless-stopped \
 保留 `--network host` + `DB_HOST=127.0.0.1` 更合适**——这时只要确认这台机器没有公网地址、
 也没做端口转发（`ip a | grep -w inet`），3001 就只在局域网内可达。
 
+**host 网络的站点局域网打不开，1Panel 的站却打得开**
+两者的包路径不同：`-p` 映射的容器流量走 `nat/DOCKER` 链转发，**不经过 ufw 的 INPUT 过滤**；
+`--network host` 时端口是宿主进程自己监听的，每一条入站连接都要过 INPUT。所以 `ufw` 为 `active`
+的机器上，host 网络还得放行端口才有外部访问（只放开内网段，别用裸 `ufw allow 3001`）：
+
+```bash
+sudo ufw allow from 192.168.100.0/24 to any port 3001 proto tcp comment 'knav lan'
+```
+
+同理，`-p 127.0.0.1:3001:3000` 是 Docker 的「只绑回环」写法，局域网一定连不上——这不是防火墙，
+是绑址。排查时两行就能分开：`sudo ss -lntp | grep ':3001'` 看绑在 `127.0.0.1` 还是 `0.0.0.0`，
+在宿主上 `curl -o /dev/null -w '%{http_code}\n' http://<局域网IP>:3001/api/health` 能通则问题在客户端侧。
+
 **`Access denied for user 'knav'@'localhost' (using password: YES)`**
 网络和端口已经通了，是账号认证失败。先分清三种情况：
 
@@ -329,5 +342,7 @@ compose 只在 `up -d` 时重算环境变量，改完执行 `docker compose up -
 - 首次失败依次暴露了三类问题，都已写进上面第 9 节：容器内 `127.0.0.1` 连不到宿主库 → 账号密码被
   `CREATE USER IF NOT EXISTS` 跳过 → `.env` 里 `DB_PASS` 还是占位符
 - 上传目录用命名卷 `-v knav-uploads:/app/public/uploads` 挂载，无「不可写」告警
+- 最终形态 `--network host` + `DB_HOST=127.0.0.1` + `-e PORT=3001`：宿主 `0.0.0.0:3001` 监听，
+  回环与局域网 IP 的 `/api/health` 都是 200（`ufw` 放行 `192.168.100.0/24` 之后才通，见第 9 节）
 
 镜像推仓库需要额外的镜像仓库凭证，本仓库没有为此改 CI。
