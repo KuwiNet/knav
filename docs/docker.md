@@ -74,7 +74,7 @@ docker run -d --name knav --restart unless-stopped \
   -p 3000:3000 \
   -e DB_HOST=203.0.113.10 -e DB_PORT=3306 -e DB_USER=knav -e DB_PASS='强密码' -e DB_NAME=knav \
   -e SITE_URL=https://example.com \
-  -e ADMIN_USERNAME=admin -e ADMIN_PASSWORD='首启动长密码' -e ADMIN_EMAIL=you@example.com \
+  -e ADMIN_USERNAME=admin -e ADMIN_PASSWORD='首启动长密码' -e ADMIN_EMAIL=admin@your-domain.com \
   -v knav-uploads:/app/public/uploads \
   knav:local
 ```
@@ -89,6 +89,14 @@ docker run -d --name knav --restart unless-stopped \
 - 按 `db/schema.sql` 建表，补列、补索引并回填历史数据，**幂等**，不会清空内容
 - 库里没有站长时按 `ADMIN_USERNAME` / `ADMIN_PASSWORD` / `ADMIN_EMAIL` 创建；
   `ADMIN_PASSWORD` 留空则跳过；已有站长时不会改名、提权或重置密码
+- `ADMIN_EMAIL` 还是 `.env.example` 里的 `you@example.com` 时，站长账号会**照原样带着这个地址建进库**：
+  之后改 `.env` 不会回填，找回密码与站点重置的验证码都会发到一个收不到的域名。
+  建号后到后台「账号设置」改成自己的邮箱，或直接：
+
+  ```bash
+  sudo mysql -e "UPDATE knav.knav_users SET email='you@your-domain.com', email_verified_at=NOW() WHERE role='owner';"
+  ```
+
 - 迁移失败直接退出，不会带着半套表结构对外服务
 
 想自己控制迁移窗口（升级时先停迁移）：
@@ -237,6 +245,17 @@ docker rm -f knav && docker run -d --name knav --restart unless-stopped \
 ```
 
 这条路要求 `DB_HOST=host.docker.internal`（`.env` 里也要一起改），因为容器内的 `127.0.0.1` 已经不是宿主机了。
+
+但**宿主的数据库必须接得住来自网桥的连接**，两条都得满足，否则会退回上面两种报错：
+
+- `bind-address`：MariaDB/MySQL 默认只监听 `127.0.0.1`（`ss -lntp | grep 3306` 只有 127.0.0.1 就是这种情况），
+  要从网桥连进来得改成 `0.0.0.0` 并重启数据库服务
+- 授权主机：`knav'@'localhost'` 不匹配从 `172.17.x.x` 进来的连接，会报 `Access denied for user 'knav'@'172.17...'`，
+  需要按实际来源建账号（`CREATE USER 'knav'@'172.17.%' ...` 或 `'%'`）并 `GRANT`
+
+两条都要改，等于把原本只回环可见的数据库开放给所有网卡。**数据库本来就只服务这台机器时，
+保留 `--network host` + `DB_HOST=127.0.0.1` 更合适**——这时只要确认这台机器没有公网地址、
+也没做端口转发（`ip a | grep -w inet`），3001 就只在局域网内可达。
 
 **`Access denied for user 'knav'@'localhost' (using password: YES)`**
 网络和端口已经通了，是账号认证失败。先分清三种情况：
