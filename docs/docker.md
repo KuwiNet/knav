@@ -123,19 +123,25 @@ curl -s -o /dev/null -w "$CSS -> %{http_code}\n" "http://127.0.0.1:3000$CSS"   #
 
 ### 2.6 镜像仓库
 
-`docker/docker-publish.yml` 是多架构（amd64/arm64）构建推送工作流，同时推 **Docker Hub** 和 **GHCR**：
-GHCR 用自带的 `GITHUB_TOKEN`，不需要任何配置；Docker Hub 需要仓库 Secrets `DOCKERHUB_USERNAME`
-和 `DOCKERHUB_TOKEN`（没有这两个 Secret 时工作流跳过 Hub 登录，只推 GHCR）。
+发布工作流是 `.github/workflows/docker-publish.yml`，多架构（amd64/arm64）同时推两个仓库，都匿名可拉：
 
-这个文件放在 `docker/` 而不是 `.github/workflows/`：**维护本仓库的 API token 没有 `workflow` 权限**，
-机器人提交 `.github/workflows/*` 会被 GitHub 拒绝。启用方法是人工把文件复制过去并提交一次：
+| 仓库 | 地址 | 标签 |
+|---|---|---|
+| Docker Hub | `kuwinet/knav` | `latest`、版本号（如 `0.1.4`）、`main` |
+| GHCR | `ghcr.io/KuwiNet/knav` | 同上 |
+
+触发方式两种：打 `v*` tag 自动发布（出 `<版本>` + `latest`），或在 Actions 里手动运行
+`Publish container image`（在默认分支上跑，出 `main` + `latest`）。Docker Hub 的登录用仓库 Secrets
+`DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`，没配时那一步自动跳过、只推 GHCR；GHCR 用工作流自带的
+`GITHUB_TOKEN`，不需要额外配置。
+
+改这个文件需要令牌带 `workflow` scope（只有 `repo` 会被 GitHub 拒：`git push` 被拒、REST 写返回 404），
+所以在网页上直接编辑最省事。仓库里不留第二份副本，避免两处不一致。
 
 ```bash
-cp docker/docker-publish.yml .github/workflows/docker-publish.yml   # 需要你手动提交这一次
+curl -sS https://raw.githubusercontent.com/KuwiNet/knav/main/.github/workflows/docker-publish.yml   # 看当前内容
+gh workflow run "Publish container image" --repo KuwiNet/knav --ref main                             # 手动发一次
 ```
-
-之后打 `v*` tag 自动发布，也可在 Actions 页面手动运行。镜像命名空间默认 `kuwinet/knav`，
-改动时要同步 `docker/install.sh` 里的 `KNAV_IMAGE` 默认值。
 
 ---
 
@@ -428,7 +434,7 @@ compose 只在 `up -d` 时重算环境变量，改完执行 `docker compose up -
 - `migrate.cjs` 在无 `node_modules` 的独立目录里跑通（依赖已自包含）
 - `entrypoint.sh` 四条分支：默认迁移后启动、`KNAV_MIGRATE=0` 跳过、迁移失败退出码 1 且不启动服务、
   uploads 不可写只告警不阻塞启动
-- 两个 compose 文件 YAML 解析通过，服务与卷的键位正确
+- 四个 compose 文件（`compose.yaml` + mysql / mariadb / host 覆盖）YAML 解析通过，服务与卷的键位正确
 
 **真机验证**（2026-11-07，Debian + 宿主机 MariaDB，`docker build` 出的 `knav:local`）：
 
@@ -440,7 +446,12 @@ compose 只在 `up -d` 时重算环境变量，改完执行 `docker compose up -
 - 最终形态 `--network host` + `DB_HOST=127.0.0.1` + `-e PORT=3001`：宿主 `0.0.0.0:3001` 监听，
   回环与局域网 IP 的 `/api/health` 都是 200（`ufw` 放行 `192.168.100.0/24` 之后才通，见第 9 节）
 
-镜像推仓库需要额外的镜像仓库凭证，本仓库没有为此改 CI。
+**CI 发镜像**（2026-11-07，Run 42283113774，手动触发 `Publish container image`）：
+
+- 构建成功，Docker Hub `kuwinet/knav` 出 `latest` 与 `main`，manifest index 里是 `linux/amd64` + `linux/arm64`
+- 两个仓库都匿名可拉：Hub `is_private=false`，GHCR 用匿名 token 取 `latest` manifest 返回 200
+- 从 registry 读回的 amd64 镜像配置与 Dockerfile 一致：Entrypoint `/usr/local/bin/knav-entrypoint.sh`、
+  Cmd `node server.js`、WorkingDir `/app`、User `node`、EXPOSE 3000、`TZ=Asia/Shanghai`、`HOSTNAME=0.0.0.0`
 
 **一键安装脚本**（开发机无 Docker，用桩程序 `docker`/`curl`/`ip`/`ss`/`openssl` 跑完整流程验证）：
 
@@ -450,6 +461,5 @@ compose 只在 `up -d` 时重算环境变量，改完执行 `docker compose up -
 - 同名容器、端口被占用两种前置冲突都提前退出，不会走到 `up -d`
 - 收尾会回取首页引用的 CSS 再请求一次，非 200 直接失败退出（就是镜像里那个 static 目录坑）
 
-**仍未在真机验证**：`install.sh` 对真实 Docker 的执行、`compose.mariadb.yaml` 起 MariaDB 11 跑迁移、
-以及 `docker/docker-publish.yml` 推镜像（需要 Hub 凭证 + 人工把文件放进 `.github/workflows/`）。
-第 2.1 节列的默认值（命名空间 `kuwinet/knav`）以实际推上去的仓库为准。
+**仍未在真机验证**：`install.sh` 对真实 Docker 的执行（含从 Hub 拉 `kuwinet/knav:latest` 后首启建库）、
+`compose.mariadb.yaml` 起 MariaDB 11 跑迁移。第 2.1 节列的默认值（命名空间 `kuwinet/knav`）已与实际推上去的仓库核对一致。
