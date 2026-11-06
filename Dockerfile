@@ -44,7 +44,11 @@ WORKDIR /app
 
 # 一律用 COPY --chown，不用 chown -R：后者会把整层文件再复制一遍，镜像白白变大
 COPY --chown=node:node --from=build /app/.next-build/standalone ./
-COPY --chown=node:node --from=build /app/.next-build/static ./.next/static
+# 目标目录跟着 distDir 走，不是官方案例里的 ./.next/static：
+# standalone/server.js 把 distDir="./.next-build" 写死进了 __NEXT_PRIVATE_STANDALONE_CONFIG，
+# 静态资源按 <distDir>/static 找。放错位置时页面照常 200、/api/health 也照常 ok，
+# 只有 /_next/static/** 全 404——表现为样式全无、脚本不加载。
+COPY --chown=node:node --from=build /app/.next-build/static ./.next-build/static
 COPY --chown=node:node --from=build /app/.next-build/migrate.cjs ./scripts/migrate.cjs
 COPY --chown=node:node --from=build /app/db/schema.sql ./db/schema.sql
 COPY --chown=node:node --from=build /app/public ./public

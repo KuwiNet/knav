@@ -292,6 +292,23 @@ mysql -u knav -p"$(awk -F= '/^DB_PASS/{print $2}' /root/knav/.env)" -h 127.0.0.1
 这类字符会让「明明填了却认证失败」。`ADMIN_PASSWORD` 非空但少于 8 位时迁移直接报错退出，
 表现和连不上库一样是重启循环。
 
+**页面能打开但完全没有样式（`/_next/static/**` 全部 404）**
+`output: standalone` 的产物里**不含** `static` 目录，要自己 COPY 到运行目录，
+且**目标路径跟着 `distDir` 走**：本镜像构建时设了 `NEXT_DIST_DIR=.next-build`，
+`standalone/server.js` 里烧死了 `distDir: "./.next-build"`，静态资源按 `<distDir>/static` 查找，
+所以 Dockerfile 里是 `.next-build/static → ./.next-build/static`，不是官方案例里的 `./.next/static`。
+
+这个坑不会让服务起不来：`/api/health` 照样 200、页面照样 200，只是样式和客户端脚本全丢，
+看起来像「CSS 没编译」。两条命令定性：
+
+```bash
+CSS=$(curl -s http://127.0.0.1:3001/ | grep -o '/_next/static/css/[^"]*' | head -1)
+curl -s -o /dev/null -w "$CSS -> %{http_code}\n" "http://127.0.0.1:3001$CSS"   # 404 就是挂错目录
+sudo docker exec knav sh -c 'ls .next-build/static/css .next/static/css 2>&1'  # 看文件到底落在哪
+```
+
+改 `distDir` 时两处要一起改：`ENV NEXT_DIST_DIR` 和 `COPY --from=build /app/<distDir>/static ./<distDir>/static`。
+
 **`/api/health` 返回 `{"ok":false}` 或一直是 unhealthy**
 连不上数据库。`docker compose logs knav` 里分辨：
 `ECONNREFUSED` 是 host/port 不对或 db 未就绪；`Access denied` 是账号密码或授权主机不对；
@@ -326,10 +343,13 @@ compose 只在 `up -d` 时重算环境变量，改完执行 `docker compose up -
 
 - `NEXT_OUTPUT=standalone NEXT_DIST_DIR=.next-build npm run build` 产出 `.next-build/standalone`，
   `server.js` 存在；不设该变量的生产构建**不产出** standalone，现网部署路径不变
-- 按 Dockerfile 的 COPY 顺序组装出与容器内一致的目录（standalone + `.next/static` + `public` +
+- 按 Dockerfile 的 COPY 顺序组装出与容器内一致的目录（standalone + `<distDir>/static` + `public` +
   `db/schema.sql` + `scripts/migrate.cjs`），放到仓库外独立目录跑 `node server.js`：
   `/api/health` `{"ok":true}`、首页 200、`/sites/{id}.html` 200、`/login` 200、
   `/uploads/...` 200 且带 `max-age=31536000, immutable`
+- 静态资源单独量过：`/_next/static/css/*.css` 200（51 KB）、`/_next/static/chunks/*.js` 200。
+  首版镜像把 static 拷成了 `./.next/static`，页面 200 但样式全无，真机上才发现——只看
+  `/api/health` 和首页状态码是查不出这个的，必须取首页里引用的 CSS 路径再请求一次
 - 深色模式联动仍在：带 `knav-theme=dark` cookie 时详情页输出 `code-theme-one-dark`
 - `migrate.cjs` 在无 `node_modules` 的独立目录里跑通（依赖已自包含）
 - `entrypoint.sh` 四条分支：默认迁移后启动、`KNAV_MIGRATE=0` 跳过、迁移失败退出码 1 且不启动服务、
@@ -340,7 +360,8 @@ compose 只在 `up -d` 时重算环境变量，改完执行 `docker compose up -
 
 - 迁移在容器内跑通，建出 19 张 `knav_*` 表，随后 `node server.js` 启动，日志 `▲ Next.js 15.5.28` / `✓ Ready in 211ms`
 - 首次失败依次暴露了三类问题，都已写进上面第 9 节：容器内 `127.0.0.1` 连不到宿主库 → 账号密码被
-  `CREATE USER IF NOT EXISTS` 跳过 → `.env` 里 `DB_PASS` 还是占位符
+  `CREATE USER IF NOT EXISTS` 跳过 → `.env` 里 `DB_PASS` 还是占位符；
+  服务起来后还发现「页面全 200 但没有样式」，是 static 拷错了目标目录（第 9 节最后一条）
 - 上传目录用命名卷 `-v knav-uploads:/app/public/uploads` 挂载，无「不可写」告警
 - 最终形态 `--network host` + `DB_HOST=127.0.0.1` + `-e PORT=3001`：宿主 `0.0.0.0:3001` 监听，
   回环与局域网 IP 的 `/api/health` 都是 200（`ufw` 放行 `192.168.100.0/24` 之后才通，见第 9 节）
