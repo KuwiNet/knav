@@ -136,7 +136,7 @@ knav 是一个基于 Next.js 15 与 MySQL 8 的导航站 / 资源分享站点系
 | 邮件 | nodemailer（SMTP） |
 | Markdown | marked + HTML 白名单过滤 |
 | 样式 | 原生 CSS 变量设计系统，无 UI 框架 |
-| 容器化 | `Dockerfile`（多阶段，standalone 产物）+ `compose.yaml`，`compose.mysql.yaml` 附 MySQL 8.4 |
+| 容器化 | `Dockerfile`（多阶段，standalone 产物）+ `compose.yaml`，`compose.mysql.yaml` 附 MySQL 8.4，`compose.host.yaml` 对接宿主机已有的库 |
 
 ---
 
@@ -299,7 +299,7 @@ Dockerfile        镜像构建（多阶段，standalone 产物）
 .dockerignore     构建上下文：排除 .env、node_modules、uploads、数据库导出等
 docker/
   entrypoint.sh   容器入口：可选同步表结构后启动服务
-compose.yaml      应用编排；compose.mysql.yaml 附一套 MySQL 8.4
+compose.yaml      应用编排；compose.mysql.yaml 附一套 MySQL 8.4；compose.host.yaml 走 host 网络对接宿主机的库
 ```
 
 ---
@@ -715,12 +715,19 @@ cd /opt/knav && bash scripts/deploy.sh --if-changed
 ### 13. Docker 部署（可选）
 
 不想在服务器上装 Node，也可以整镜像部署。仓库带 `Dockerfile`、`docker/entrypoint.sh`
-与两个 compose 文件：
+与三个 compose 文件（默认那份、附 MySQL 8.4 的那份、对接宿主机数据库的 `compose.host.yaml`）：
 
 ```bash
 cp .env.example .env      # 填 DB_* / SITE_URL / ADMIN_*
 docker compose up -d --build
 curl -s http://127.0.0.1:3000/api/health    # {"ok":true}
+```
+
+数据库是宿主机自装的 MariaDB/MySQL（只监听 `127.0.0.1`）时，加一份覆盖文件走 host 网络，
+`DB_HOST` 保持 `127.0.0.1` 即可，不用放开数据库监听也不用改授权：
+
+```bash
+docker compose -f compose.yaml -f compose.host.yaml up -d --build
 ```
 
 - 容器启动时自动执行表结构迁移（幂等，等价于 `npm run db:migrate`），空库首启即可用；

@@ -43,6 +43,7 @@ Dockerfile
 .dockerignore
 compose.yaml
 compose.mysql.yaml
+compose.host.yaml
 docker/compose*
 docs
 README.md

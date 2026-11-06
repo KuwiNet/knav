@@ -52,7 +52,22 @@ docker compose -f compose.yaml -f compose.mysql.yaml up -d --build
   之后改 `.env` 不会同步到已建好的库
 - 应用等 `db` 健康检查通过才启动，首启迁移不会撞上「库还没就绪」
 
-### 2.3 验证
+### 2.3 数据库装在宿主机（自装 MariaDB / 1Panel 的库）
+
+宿主机自己装的 MySQL 通常只监听 `127.0.0.1`，账号也只授权 `localhost`。桥接容器进不了这个监听地址，
+源 IP 还会被授权主机拒掉，只能同时改 `bind-address` 和授权网段（见第 9 节）。
+用 `compose.host.yaml` 走 host 网络就不用动数据库——容器里的 `127.0.0.1` 就是宿主机：
+
+```bash
+docker compose -f compose.yaml -f compose.host.yaml up -d --build
+```
+
+`.env` 里保持 `DB_HOST=127.0.0.1`，并把 `PORT` 填成想对外监听的端口（host 网络下它就是宿主端口，
+`ports:` 那行不再生效，compose 打一行 `Published ports are discarded` 警告属正常）。
+之前用 `docker run` 起过站的，加 `KNAV_UPLOADS_VOLUME=<原卷名>` 才能接着用已有素材，否则会换到一个新空卷。
+另外 host 网络的入站要过防火墙，`ufw` 为 active 的机器见第 9 节最后一条。
+
+### 2.4 验证
 
 ```bash
 docker compose ps                                 # knav 应为 healthy

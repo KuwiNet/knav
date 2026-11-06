@@ -1,0 +1,23 @@
+name: knav
+
+# 「数据库装在宿主机」时的覆盖文件，配合 compose.yaml 一起用：
+#   docker compose -f compose.yaml -f compose.host.yaml up -d --build
+#
+# 为什么需要它：默认那份走桥接 + 端口映射，而宿主机自装的 MariaDB/MySQL 通常只监听
+# 127.0.0.1、账号也只授权 localhost。桥接容器既进不了那个监听地址，源 IP 也会被授权主机
+# 拒掉，只能把 DB_HOST 换成 host.docker.internal 并放开 bind-address + 授权网段——等于把
+# 数据库从回环搬到所有网卡。改 host 网络则容器里的 127.0.0.1 就是宿主，什么都不用动。
+
+services:
+  knav:
+    network_mode: host
+    # host 网络下 ports: 不生效（compose 会打一行 "Published ports are discarded" 警告，
+    # 属正常），对外监听的端口由下面注入的 PORT 决定。
+    environment:
+      PORT: "${PORT:-3000}"
+
+volumes:
+  uploads:
+    # 之前用 docker run 起过站的，把卷名指回原来那个就能接着用已有素材：
+    #   .env 里加一行 KNAV_UPLOADS_VOLUME=knav-uploads
+    name: ${KNAV_UPLOADS_VOLUME:-knav_uploads}
