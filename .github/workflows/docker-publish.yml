@@ -21,6 +21,10 @@ on:
         description: 同时把产物标为 latest
         type: boolean
         default: false
+      only_description:
+        description: 只同步 Docker Hub 概述，不构建镜像（改了 hub-overview.md 时用）
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -38,6 +42,8 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # 只刷新概述时不必陪着跑一次十几分钟的多架构构建
+    if: ${{ github.event.inputs.only_description != 'true' }}
     env:
       # Secret 不能直接写在 if 里比较（secrets 上下文在部分场景取不到值），
       # 先落到 job 级 env，再用它判断有没有配 Hub 凭据
@@ -113,12 +119,21 @@ jobs:
             exit 0
           fi
 
-          # 用 PAT 换一个 Hub API 的 JWT：scope 要 pull,push，只给 pull 的令牌改不了描述
-          jwt="$(curl -fsS -u "${DOCKERHUB_USERNAME}:${DOCKERHUB_TOKEN}" \
-            "https://auth.docker.io/token?service=registry.docker.io&scope=repository:${HUB_IMAGE}:pull,push" \
-            | sed -n 's/.*"token":"\([^"]*\)".*/\1/p' || true)"
+          # auth.docker.io 发的 JWT 只有 registry 作用域（推镜像够用），拿它 PATCH 网站 API 会 401；
+          # 改仓库元数据要走 Hub 自己的登录接口拿账号级 JWT，PAT 当密码传即可。
+          # 凭据交给 python 组 JSON，避免口令里出现引号或 $ 时把命令行拼坏
+          code="$(curl -sS -o /tmp/hub-login.json -w '%{http_code}' -X POST \
+            -H 'Content-Type: application/json' \
+            --data "$(python3 -c 'import json,os;print(json.dumps({"username":os.environ["DOCKERHUB_USERNAME"],"password":os.environ["DOCKERHUB_TOKEN"]}))')" \
+            "https://hub.docker.com/v2/users/login/")"
+          if [ "$code" != 200 ]; then
+            echo "Hub 登录失败：HTTP $code（用户名与令牌不配对，或令牌已被回收）" >&2
+            exit 1
+          fi
+          # 响应里 token 与 refresh_token 都在，用 json 取，别用贪婪正则（会捞到 refresh_token）
+          jwt="$(python3 -c 'import json;print(json.load(open("/tmp/hub-login.json",encoding="utf-8")).get("token",""))')"
           if [ -z "$jwt" ]; then
-            echo "换不到 Hub API token：确认 DOCKERHUB_USERNAME / DOCKERHUB_TOKEN 是否配对、令牌是否还有 Read/Write 权限" >&2
+            echo "Hub 登录返回 200 但没有 token 字段，接口形态变了" >&2
             exit 1
           fi
 
