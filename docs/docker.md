@@ -174,13 +174,22 @@ curl -s -o /dev/null -w "$CSS -> %{http_code}\n" "http://127.0.0.1:3000$CSS"   #
 
 ### 2.6 镜像仓库
 
-发布工作流是 `.github/workflows/docker-publish.yml`，多架构（amd64/arm64）同时推两个仓库，都匿名可拉：
+发布工作流是 `.github/workflows/docker-publish.yml`，多架构（amd64/arm64）同时推三个仓库，都匿名可拉：
 
 | 仓库 | 地址 | 标签 |
 |---|---|---|
 | Docker Hub | `kuwinet/knav` | `latest`、版本号（如 `0.1.4`）、`main` |
 | GHCR | `ghcr.io/KuwiNet/knav` | 同上 |
 | 阿里云 ACR（个人版·北京实例） | `crpi-31z6v1rz7y15fca2.cn-beijing.personal.cr.aliyuncs.com/kuwinet/knav` | 同上；国内机器直连可用 |
+
+构建分三步，不是一个 job 带 `platforms=amd64,arm64`：`构建 amd64`（`ubuntu-24.04`）与
+`构建 arm64`（`ubuntu-24.04-arm`，GitHub 对公开仓库免费开放的原生 arm runner）并行，产物只落
+GHCR 的 `<tag>-amd64` / `<tag>-arm64`；`合成多架构并推送` 用 `docker buildx imagetools create`
+把两个架构拼成 manifest list，再推到上面三个仓库。之所以不用模拟：x86 runner 上 arm64 走 qemu，
+实测 Run 42359760772 里 arm64 的 `RUN npm ci` 跑了 87 分钟没结束，整条发布一个镜像都没推出去。
+中间标签只留在 GHCR（Hub 的 tag 列表是给用户看的），每次发版那里多两条。
+推送目标一律先 `tr 'A-Z' 'a-z'`：docker 引用名不允许大写，而 `github.repository` 是 `KuwiNet/knav`，
+以前交给 build-push-action 会自动小写化，手工拼 imagetools 参数时它会直接报错。
 
 ACR 是可选的：配了 Secrets `ACR_USERNAME` / `ACR_PASSWORD` 才推，没配就跳过并在日志里说明原因
 （不配不影响 Hub 与 GHCR）。地址取仓库变量 `ACR_IMAGE`（`gh variable set ACR_IMAGE --body <完整镜像地址>`），
@@ -228,7 +237,7 @@ Hub 的概述页不会自动读 README：个人账号的仓库没有这层联动
 `同步 Docker Hub 概述` job 每次都会拿它 PATCH 一次仓库对象，改完文案跟着下一次发布自动生效。
 
 ```bash
-# 只刷新概述，不跑十几分钟的多架构构建
+# 只刷新概述，不跑构建（正常一次发版约 5 分钟）
 gh workflow run docker-publish.yml --repo KuwiNet/knav --ref main -f only_description=true
 ```
 
@@ -504,9 +513,12 @@ compose 只在 `up -d` 时重算环境变量，改完执行 `docker compose up -
 `npm ci` 视网络而定，`next build` 约 1~2 分钟。可以在 `Dockerfile` 的 `RUN npm ci` 之前加一行
 `RUN npm config set registry https://registry.npmmirror.com`。
 
-**想同时出 amd64 和 arm64 镜像**
-单独构建即可（依赖里没有原生模块）。跨架构推仓库用
+**想自己出 amd64 + arm64 镜像**
+依赖里没有原生模块，跨架构推仓库用
 `docker buildx build --platform linux/arm64,linux/amd64 -t <registry>/knav:<tag> --push .`。
+在有 Docker 的机器上这么干比 CI 省事；CI 那边之所以拆成两个原生 runner job，是因为 x86 runner 上的
+qemu 模拟跑 `npm ci` 慢到不可用（见 2.6）。只想把一个架构搬到另一个仓库，不用重新构建：
+`docker buildx imagetools create -t <dst>:<tag> <src>:<tag>`。
 
 **推这几个文件会不会触发线上部署？**
 `deploy.yml` 的 `paths-ignore` 没有覆盖 `Dockerfile` / `compose*.yaml` / `docker/**`，
@@ -567,7 +579,8 @@ compose 只在 `up -d` 时重算环境变量，改完执行 `docker compose up -
 - 现在匿名 `GET /v2/repositories/kuwinet/knav/` 能读到 92 字节的 `description` 和 4886 字节的
   `full_description`（正文来自 `docker/hub-overview.md`）；浏览器里「No overview available」消失，
   3 张截图直接从 `raw.githubusercontent.com` 取到，`naturalWidth` 都是 1440
-- `only_description=true` 时 `build` job 被 `if:` 整个跳过（run 里显示 0s），改文案不用陪跑多架构构建
+- `only_description=true` 时 `构建 amd64` / `构建 arm64` / `合成多架构并推送` 三个 job 都被 `if:` 整个跳过
+  （run 里显示 0s），改文案不用陪跑构建
 
 **国内源（Gitee 下载 + ACR/DaoCloud 镜像）**（2026-11-07 改动，开发机无 Docker，用桩程序跑矩阵验证）：
 
@@ -594,10 +607,30 @@ compose 只在 `up -d` 时重算环境变量，改完执行 `docker compose up -
   `registry.aliyuncs.com:cn-beijing:26842`（同一个后端，只是通用域名要自己拼地域），杭州那个域名指向的是
   另一地域、里面没有这个命名空间。Run 42353136580 就是挂在这一步的登录上
   （`Get ".../v2/": unauthorized: authentication required`），Hub 与 GHCR 未受影响。
-- **待真机确认**：命名空间 `kuwinet` + 仓库 `knav` 还没在北京实例里建好，匿名取
-  `.../v2/kuwinet/knav/manifests/latest` 仍是 401（不存在/未公开都是这个表现），所以现在国内机器的首次安装
-  靠的是上面那步「补试官方名」。凭据填对（用户名＝控制台 `--username=` 那串账号全名，密码＝固定密码）
-  并推一次镜像后，再验 `KNAV_CN=1` 走 ACR 的路
+- **ACR 已推通且匿名可拉**（2026-11-07，Run 42367713316）：北京实例的 `kuwinet/knav` 现在有 `latest` 与
+  `main` 两个 tag，匿名带 token 取 `.../v2/kuwinet/knav/tags/list` 和 `manifests/latest` 都是 200。
+  三个仓库（Hub / GHCR / ACR）的 `latest` 与 `main` 指向同一个 index digest `sha256:d0159754…`，
+  清单里 `linux/amd64` + `linux/arm64` 都在，所以国内机器首次安装能直接走 ACR；
+  「补试官方名」那条兜底留着当保险（ACR 抖动或还没推到时仍然装得下去）
+
+**发布工作流改原生双架构**（2026-11-07，Run 42359760772 取消 → Run 42367713316 成功）：
+
+- 旧形态（一个 job 带 `platforms=amd64,arm64` + qemu）实测不可用：Run 42359760772 里 amd64 全程 62 秒，
+  arm64 卡在 `RUN npm ci`（步骤 #18）87 分钟没跑完，那一层缓存也没命中。步骤还在跑时日志取不到
+  （GitHub 只在步骤结束时上传），是取消之后才拿回来说明卡在哪一层的
+- 新形态：`构建 amd64`（`ubuntu-24.04`）与 `构建 arm64`（`ubuntu-24.04-arm`）并行，各推 GHCR 的
+  `<tag>-amd64` / `<tag>-arm64`；`合成多架构并推送` 用 `docker buildx imagetools create` 拼成清单再推三个仓库。
+  Run 42367713316 全程 4 分 38 秒（两个架构各 26~30 秒——缓存命中；上一轮冷缓存时各约 2 分钟；
+  merge 往三个仓库搬层约 3 分钟）
+- `ubuntu-24.04-arm` 在公开仓库直接可用：arm64 job 秒级拿到 runner，Docker 与 buildx 都是预装的
+- 新踩的坑：imagetools 是命令行手工拼引用名，`ghcr.io/KuwiNet/knav` 的大写会直接报
+  `invalid reference format: repository name (KuwiNet/knav) must be lowercase`
+  （Run 42367319815 就这么失败，两个架构都构建成功却合成不了），所以推送目标先 `tr 'A-Z' 'a-z'`
+- 缓存按架构分 scope（`type=gha,scope=amd64|arm64`）：两个 job 同时写同一份 GHA 缓存会互相抢，
+  日志里真出现过 `Unable to reserve cache ... another job may be creating this cache`
+- 核对步骤会自己判成败：每个目标仓库、每个标签都要同时看到 amd64 与 arm64，缺一行 FAIL 就退出 1
+  （Run 42367713316 打出 6 行 OK：三个仓库 × `main`/`latest`）
+- 手动触发只重写 `latest` / `main`，`0.1.4` / `0.1` / `v0.1.4` 三个版本标签没动，这次也没换应用代码
 
 **一键安装脚本**（开发机无 Docker，用桩程序 `docker`/`curl`/`ip`/`ss`/`openssl` 跑完整流程验证）：
 
