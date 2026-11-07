@@ -2794,6 +2794,13 @@ select {
   margin-bottom: 12px;
 }
 
+/* 邮件日志：收件人和错误信息都是长串，不固定列宽就会把主题挤成竖排。
+   固定布局下写死的列宽被严格遵守，剩下的宽度全给主题；窄屏在表格内部横向滚动。 */
+.mail-log-table {
+  table-layout: fixed;
+  min-width: 940px;
+}
+
 .mail-preview-mask {
   position: fixed;
   inset: 0;

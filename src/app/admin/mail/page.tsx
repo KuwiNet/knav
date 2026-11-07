@@ -63,23 +63,27 @@ export default async function AdminMailPage({
       <div className="card card-pad">
         {mail ? (
           <div className="table-wrap">
-            <table className="table">
+            <table className="table mail-log-table">
               <thead>
                 <tr>
-                  <th style={{ width: 60 }}>ID</th>
-                  <th style={{ width: 220 }}>收件人</th>
+                  <th style={{ width: 56 }}>ID</th>
+                  <th style={{ width: 170 }}>收件人</th>
                   <th>主题</th>
-                  <th style={{ width: 90 }}>状态</th>
-                  <th style={{ width: 200 }}>错误信息</th>
-                  <th style={{ width: 150 }}>时间</th>
-                  <th style={{ width: 80 }}>正文</th>
+                  <th style={{ width: 84 }}>状态</th>
+                  <th style={{ width: 180 }}>错误信息</th>
+                  <th style={{ width: 140 }}>时间</th>
+                  <th style={{ width: 72 }}>正文</th>
                 </tr>
               </thead>
               <tbody>
                 {mail.items.map((m) => (
                   <tr key={m.id}>
                     <td className="text-muted">{m.id}</td>
-                    <td className="text-muted text-sm">{m.to}</td>
+                    <td className="text-muted text-sm">
+                      <span className="cell-ellipsis" title={m.to}>
+                        {m.to}
+                      </span>
+                    </td>
                     <td>{m.subject}</td>
                     <td>
                       <span
@@ -88,8 +92,10 @@ export default async function AdminMailPage({
                         {m.status === "sent" ? "已发送" : "失败"}
                       </span>
                     </td>
-                    <td className="text-muted text-sm" style={{ wordBreak: "break-all" }}>
-                      {m.error || "-"}
+                    <td className="text-muted text-sm">
+                      <span className="cell-ellipsis" title={m.error || ""}>
+                        {m.error || "-"}
+                      </span>
                     </td>
                     <td className="text-muted text-sm nowrap">
                       {String(m.createdAt).slice(0, 16)}

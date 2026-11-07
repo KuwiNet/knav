@@ -732,12 +732,29 @@ export async function listMailLogs(opts: {
   };
 }
 
-export async function getMailLogBody(id: number): Promise<string | null> {
-  const row = await queryOne<{ body: string }>(
-    "SELECT body FROM knav_mail_log WHERE id = ? LIMIT 1",
+export async function getMailLog(
+  id: number
+): Promise<{
+  to: string;
+  subject: string;
+  status: string;
+  error: string;
+  createdAt: string;
+  body: string;
+} | null> {
+  const row = await queryOne<any>(
+    "SELECT to_email, subject, status, error, created_at, body FROM knav_mail_log WHERE id = ? LIMIT 1",
     [id]
   );
-  return row?.body ?? null;
+  if (!row) return null;
+  return {
+    to: row.to_email ?? "",
+    subject: row.subject ?? "",
+    status: row.status ?? "",
+    error: row.error ?? "",
+    createdAt: row.created_at ?? "",
+    body: row.body ?? "",
+  };
 }
 
 /* ---------------------------------------------------------------- 站内通知日志 */
