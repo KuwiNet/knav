@@ -470,6 +470,14 @@ compose 只在 `up -d` 时重算环境变量，改完执行 `docker compose up -
 - 从 registry 读回的 amd64 镜像配置与 Dockerfile 一致：Entrypoint `/usr/local/bin/knav-entrypoint.sh`、
   Cmd `node server.js`、WorkingDir `/app`、User `node`、EXPOSE 3000、`TZ=Asia/Shanghai`、`HOSTNAME=0.0.0.0`
 
+**打 tag 发镜像**（2026-11-07，推 `v0.1.4`，Run 42329967413）：
+
+- 版本号标签要这一次才出现：Hub `kuwinet/knav` 实际有 `0.1.4`、`0.1`、`v0.1.4`、`latest`、`main`，
+  GHCR 同样五个标签，匿名 token 取 manifest 全部 200
+- 上一次手动触发只出 `latest` + `main` 不是 bug：`type=semver` 只解析 `refs/tags/v*`，而
+  `workflow_dispatch` 的 `github.ref_type` 恒为 `branch`（就算把 ref 选成某个 tag 也一样），
+  所以**版本号镜像标签只能靠推 `v*` tag 的那次 run 拿到**；手动触发用来补 `latest`
+
 **一键安装脚本**（开发机无 Docker，用桩程序 `docker`/`curl`/`ip`/`ss`/`openssl` 跑完整流程验证）：
 
 - `mysql` 与 `mariadb` 两条分支各自只下载/引用对应的覆盖文件，卷名 `knav_mysqldata` / `knav_mariadbdata` 正确
