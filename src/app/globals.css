@@ -1227,6 +1227,12 @@ select {
   white-space: nowrap;
 }
 
+/* 日志类表格的时间列：拆成「日期 / 时刻」两行，比 nowrap 的一行窄一大截 */
+.log-time-cell {
+  line-height: 1.35;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ---------------------------------------------------------------- 详情页 */
 .detail {
   background: var(--surface);
@@ -2795,10 +2801,17 @@ select {
 }
 
 /* 邮件日志：收件人和错误信息都是长串，不固定列宽就会把主题挤成竖排。
-   固定布局下写死的列宽被严格遵守，剩下的宽度全给主题；窄屏在表格内部横向滚动。 */
+   固定布局下写死的列宽被严格遵守，剩下的宽度全给主题。
+   min-width 只保证「主题不被压成 0、文字不会溢出到隔壁列」的下限，
+   比它更窄时在 .table-wrap 内部横向滚动，页面本身不会被撑宽（实测 scrollWidth 不变）。 */
 .mail-log-table {
   table-layout: fixed;
-  min-width: 940px;
+  min-width: 590px;
+}
+
+.mail-log-table th,
+.mail-log-table td {
+  padding: 9px 6px;
 }
 
 .mail-preview-mask {

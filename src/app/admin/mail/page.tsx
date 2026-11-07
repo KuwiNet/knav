@@ -66,13 +66,13 @@ export default async function AdminMailPage({
             <table className="table mail-log-table">
               <thead>
                 <tr>
-                  <th style={{ width: 56 }}>ID</th>
-                  <th style={{ width: 170 }}>收件人</th>
+                  <th style={{ width: 48 }}>ID</th>
+                  <th style={{ width: 128 }}>收件人</th>
                   <th>主题</th>
-                  <th style={{ width: 84 }}>状态</th>
-                  <th style={{ width: 180 }}>错误信息</th>
-                  <th style={{ width: 140 }}>时间</th>
-                  <th style={{ width: 72 }}>正文</th>
+                  <th style={{ width: 76 }}>状态</th>
+                  <th style={{ width: 140 }}>错误信息</th>
+                  <th style={{ width: 88 }}>时间</th>
+                  <th style={{ width: 60 }}>正文</th>
                 </tr>
               </thead>
               <tbody>
@@ -84,7 +84,11 @@ export default async function AdminMailPage({
                         {m.to}
                       </span>
                     </td>
-                    <td>{m.subject}</td>
+                    <td>
+                      <span className="cell-ellipsis" title={m.subject}>
+                        {m.subject}
+                      </span>
+                    </td>
                     <td>
                       <span
                         className={m.status === "sent" ? "badge badge-green" : "badge badge-red"}
@@ -97,8 +101,9 @@ export default async function AdminMailPage({
                         {m.error || "-"}
                       </span>
                     </td>
-                    <td className="text-muted text-sm nowrap">
-                      {String(m.createdAt).slice(0, 16)}
+                    <td className="text-muted text-sm log-time-cell">
+                      <div>{String(m.createdAt).slice(0, 10)}</div>
+                      <div>{String(m.createdAt).slice(11, 16)}</div>
                     </td>
                     <td>
                       <Link href={`/admin/mail/${m.id}`} className="btn btn-outline btn-sm">
@@ -116,11 +121,11 @@ export default async function AdminMailPage({
               <thead>
                 <tr>
                   <th style={{ width: 60 }}>ID</th>
-                  <th style={{ width: 180 }}>用户</th>
-                  <th style={{ width: 100 }}>类型</th>
+                  <th style={{ width: 150 }}>用户</th>
+                  <th style={{ width: 96 }}>类型</th>
                   <th>标题与正文</th>
-                  <th style={{ width: 80 }}>状态</th>
-                  <th style={{ width: 150 }}>时间</th>
+                  <th style={{ width: 76 }}>状态</th>
+                  <th style={{ width: 88 }}>时间</th>
                 </tr>
               </thead>
               <tbody>
@@ -157,8 +162,9 @@ export default async function AdminMailPage({
                         {n.isRead ? "已读" : "未读"}
                       </span>
                     </td>
-                    <td className="text-muted text-sm nowrap">
-                      {String(n.createdAt).slice(0, 16)}
+                    <td className="text-muted text-sm log-time-cell">
+                      <div>{String(n.createdAt).slice(0, 10)}</div>
+                      <div>{String(n.createdAt).slice(11, 16)}</div>
                     </td>
                   </tr>
                 ))}
