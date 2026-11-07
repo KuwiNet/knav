@@ -7,6 +7,10 @@
 # 需要参数时用环境变量（管道执行没法带命令行参数）：
 #   curl -fsSL .../install.sh | sudo KNAV_DB=mariadb KNAV_PORT=8080 bash
 #
+# 国内机器：compose 文件默认 GitHub 拉不到就自动换 Gitee，镜像默认在探测到 Docker Hub 不可达时
+# 换成阿里云 ACR + DaoCloud 镜像。想强制某一边用 KNAV_CN=1 / KNAV_CN=0；脚本本身也可以从 Gitee 取：
+#   curl -fsSL https://gitee.com/kuwinet/knav/raw/main/docker/install.sh | sudo bash
+#
 # 做的事：检查 Docker → 下载 compose 文件 → 生成 .env（随机密码、探测站点地址）
 #   → 拉镜像 → 起服务 → 等健康并回取一次 CSS → 打印本机/内网/公网访问地址与站长口令。
 # 不做的事：不装 Docker、不改宿主数据库、不删任何已有容器。
@@ -17,7 +21,11 @@ KNAV_DIR="${KNAV_DIR:-/opt/knav}"
 KNAV_PORT="${KNAV_PORT:-3000}"
 KNAV_DB="${KNAV_DB:-mysql}"                      # mysql | mariadb
 KNAV_REF="${KNAV_REF:-main}"                      # 下载 compose 文件的分支或 tag
-KNAV_IMAGE="${KNAV_IMAGE:-kuwinet/knav:latest}"   # 镜像仓库地址；本地构建的镜像改成 knav:local
+KNAV_CN="${KNAV_CN:-auto}"                        # auto=探到 Docker Hub 不通才走国内源；1=强制国内源；0=只用国外
+KNAV_RAW_BASE="${KNAV_RAW_BASE:-}"                # 手动指定 compose 文件的下载地址；留空按 GitHub→Gitee 依次试
+KNAV_IMAGE="${KNAV_IMAGE:-}"                      # 应用镜像；留空时按 KNAV_CN 选 Hub 或阿里云 ACR
+KNAV_DB_IMAGE="${KNAV_DB_IMAGE:-}"                # 数据库镜像；留空时按 KNAV_CN 选官方或国内镜像
+KNAV_ACR_IMAGE="${KNAV_ACR_IMAGE:-registry.cn-hangzhou.aliyuncs.com/kuwinet/knav}"   # 国内应用镜像；命名空间要和阿里云上建的一致
 KNAV_ADMIN_USER="${KNAV_ADMIN_USER:-admin}"
 KNAV_ADMIN_EMAIL="${KNAV_ADMIN_EMAIL:-}"
 KNAV_SITE_URL="${KNAV_SITE_URL:-}"
@@ -31,17 +39,57 @@ die() { printf '\033[1;31m[knav] 停止：\033[0m %s\n' "$*" >&2; exit 1; }
 if [ "$(id -u)" -ne 0 ]; then
   if [ -f "$0" ] && command -v sudo >/dev/null 2>&1; then
     exec sudo KNAV_DIR="$KNAV_DIR" KNAV_PORT="$KNAV_PORT" KNAV_DB="$KNAV_DB" KNAV_REF="$KNAV_REF" \
-      KNAV_IMAGE="$KNAV_IMAGE" KNAV_ADMIN_USER="$KNAV_ADMIN_USER" KNAV_ADMIN_EMAIL="$KNAV_ADMIN_EMAIL" \
+      KNAV_CN="$KNAV_CN" KNAV_RAW_BASE="$KNAV_RAW_BASE" KNAV_IMAGE="$KNAV_IMAGE" \
+      KNAV_DB_IMAGE="$KNAV_DB_IMAGE" KNAV_ACR_IMAGE="$KNAV_ACR_IMAGE" \
+      KNAV_ADMIN_USER="$KNAV_ADMIN_USER" KNAV_ADMIN_EMAIL="$KNAV_ADMIN_EMAIL" \
       KNAV_SITE_URL="$KNAV_SITE_URL" KNAV_FORCE="$KNAV_FORCE" bash "$0" "$@"
   fi
   die "需要 root：sudo bash install.sh，或 curl -fsSL <地址> | sudo bash"
 fi
 
+# 应用镜像与数据库镜像都在这张表里选：国内源只换「从哪拉」，不换「拉什么版本」
 case "$KNAV_DB" in
-  mysql)   DB_FILE=compose.mysql.yaml;   DB_VOL=knav_mysqldata ;;
-  mariadb) DB_FILE=compose.mariadb.yaml; DB_VOL=knav_mariadbdata ;;
+  mysql)   DB_FILE=compose.mysql.yaml;   DB_VOL=knav_mysqldata
+           DB_IMAGE_UPSTREAM=mysql:8.4
+           DB_IMAGE_CN=docker.m.daocloud.io/library/mysql:8.4 ;;
+  mariadb) DB_FILE=compose.mariadb.yaml; DB_VOL=knav_mariadbdata
+           DB_IMAGE_UPSTREAM=mariadb:11
+           DB_IMAGE_CN=docker.m.daocloud.io/library/mariadb:11 ;;
   *) die "KNAV_DB 只能是 mysql 或 mariadb（当前：$KNAV_DB）" ;;
 esac
+
+# Docker Hub 通不通：只看能不能拿到 HTTP 状态码。401 是「要鉴权」，链路本身是通的；
+# 拿不到码（000）才是 TCP/TLS 直接被超时拖死，国内多数机器就是这一种。8 秒上限，探测不拖慢安装
+hub_reachable() {
+  local c
+  c="$(curl -sS -o /dev/null -m 8 -w '%{http_code}' https://registry-1.docker.io/v2/ 2>/dev/null || true)"
+  [ -n "$c" ] && [ "$c" != 000 ]
+}
+
+USE_CN="$KNAV_CN"
+if [ "$USE_CN" = auto ]; then
+  if hub_reachable; then
+    USE_CN=0
+  else
+    USE_CN=1
+    log "探测到 Docker Hub 不可达，本次改用国内源（要强制关掉：KNAV_CN=0）"
+  fi
+fi
+# 镜像标签和 KNAV_REF 对齐：main 分支的产物同时打了 latest，tag v0.1.4 的产物打了 0.1.4
+if [ "$KNAV_REF" = main ]; then IMG_TAG=latest; else IMG_TAG="${KNAV_REF#v}"; fi
+if [ "$USE_CN" = 1 ]; then
+  IMG_DEFAULT="$KNAV_ACR_IMAGE:$IMG_TAG"; DB_IMG_DEFAULT="$DB_IMAGE_CN"
+else
+  IMG_DEFAULT="kuwinet/knav:$IMG_TAG"; DB_IMG_DEFAULT="$DB_IMAGE_UPSTREAM"
+fi
+# 记一下是不是命令行显式给的值：沿用旧 .env 时，没显式指定就以 .env 为准，
+# 免得一次探测把已装好的站换成另一个仓库（结尾打印的也是 .env 里那个）
+USER_SET_IMAGE=0
+USER_SET_DB_IMAGE=0
+if [ -n "$KNAV_IMAGE" ]; then USER_SET_IMAGE=1; fi
+if [ -n "$KNAV_DB_IMAGE" ]; then USER_SET_DB_IMAGE=1; fi
+KNAV_IMAGE="${KNAV_IMAGE:-$IMG_DEFAULT}"
+KNAV_DB_IMAGE="${KNAV_DB_IMAGE:-$DB_IMG_DEFAULT}"
 
 command -v docker >/dev/null 2>&1 || die "没找到 docker。先装 Docker：curl -fsSL https://get.docker.com | sh"
 docker info >/dev/null 2>&1 || die "docker 守护进程不可用（服务没起，或当前用户没权限）：systemctl start docker"
@@ -58,11 +106,27 @@ fi
 mkdir -p "$KNAV_DIR"
 cd "$KNAV_DIR"
 
-RAW="https://raw.githubusercontent.com/KuwiNet/knav/$KNAV_REF"
+# compose 文件按「GitHub → Gitee」依次试，每个源 20 秒上限：raw.githubusercontent.com 在国内经常
+# 整段超时，而 Gitee 的镜像仓库几分钟就同步一次。Gitee 的 raw 会 302 到带时效签名的地址，
+# 必须 -L 才拿得到正文（不带 -L 落盘的是 388 字节的跳转页）
+RAW_BASES=()
+if [ -n "$KNAV_RAW_BASE" ]; then
+  RAW_BASES=("$KNAV_RAW_BASE")
+else
+  RAW_BASES=(
+    "https://raw.githubusercontent.com/KuwiNet/knav/$KNAV_REF"
+    "https://gitee.com/kuwinet/knav/raw/$KNAV_REF")
+fi
 for f in compose.yaml "$DB_FILE"; do
-  log "下载 $f"
-  curl -fsSL --retry 3 -o "$f" "$RAW/$f" || die "下载 $RAW/$f 失败：检查网络，或改用 KNAV_REF=v0.1.4 指定已发布的 tag"
-  [ -s "$f" ] || die "$f 下载后是空的"
+  got=0
+  for base in "${RAW_BASES[@]}"; do
+    log "下载 $f（← $(printf '%s' "$base" | cut -d/ -f3)）"
+    if curl -fsSL --retry 2 -m 20 -o "$f.part" "$base/$f"; then got=1; break; fi
+    rm -f "$f.part"
+  done
+  [ "$got" = 1 ] || die "下载 $f 失败，两个源都没通：${RAW_BASES[*]}。可以先手动把仓库根目录的 $f 放到 $KNAV_DIR 再重跑，或用 KNAV_RAW_BASE 指定一个能访问的镜像地址"
+  [ -s "$f.part" ] || die "$f 下载后是空的"
+  mv -f "$f.part" "$f"
 done
 
 ENV_FILE="$KNAV_DIR/.env"
@@ -100,6 +164,11 @@ if [ -f "$ENV_FILE" ] && [ "$KNAV_FORCE" != "1" ]; then
   [ -n "$KNAV_SITE_URL" ] || KNAV_SITE_URL="$(env_get SITE_URL)"
   KNAV_ADMIN_EMAIL="$(env_get ADMIN_EMAIL)"
   SMTP_HOST_NOW="$(env_get SMTP_HOST)"
+  if [ "$USER_SET_IMAGE" = 0 ]; then KNAV_IMAGE="$(env_get KNAV_IMAGE)"; fi
+  if [ "$USER_SET_DB_IMAGE" = 0 ]; then KNAV_DB_IMAGE="$(env_get KNAV_DB_IMAGE)"; fi
+  # 老版本的 .env 里没有这两行，读回来是空；空着就别硬套，让 compose 用它自己的默认值
+  KNAV_IMAGE="${KNAV_IMAGE:-$IMG_DEFAULT}"
+  KNAV_DB_IMAGE="${KNAV_DB_IMAGE:-$DB_IMG_DEFAULT}"
 else
   PW_FRESH=1
   SMTP_HOST_NOW=""
@@ -125,6 +194,9 @@ else
 
 PORT=$KNAV_PORT
 KNAV_IMAGE=$KNAV_IMAGE
+# 数据库镜像：默认就是 compose.mysql.yaml / compose.mariadb.yaml 里写的官方名，
+# 国内机器走 DaoCloud 镜像时才带上前缀。换库版本只改这里，不用碰 compose 文件
+KNAV_DB_IMAGE=$KNAV_DB_IMAGE
 
 # 数据库（跑在同一个 compose 网络里，DB_HOST 就是服务名 db）
 DB_HOST=db
@@ -160,8 +232,14 @@ COMPOSE="docker compose -f $KNAV_DIR/compose.yaml -f $KNAV_DIR/$DB_FILE"
 if docker image inspect "$KNAV_IMAGE" >/dev/null 2>&1; then
   log "本机已有 $KNAV_IMAGE，跳过拉取"
 else
-  log "拉取镜像（$KNAV_IMAGE + $KNAV_DB）"
-  $COMPOSE pull || die "拉镜像失败：仓库里还没有这个 tag 就改用本地构建的镜像（KNAV_IMAGE=knav:local，见 docs/docker.md 第 3 节）"
+  log "拉取镜像：$KNAV_IMAGE + $KNAV_DB_IMAGE"
+  if ! $COMPOSE pull; then
+    if [ "$USE_CN" = 1 ]; then
+      die "国内源拉取失败（$KNAV_IMAGE + $KNAV_DB_IMAGE）。ACR 上还没这个镜像就等发布工作流推一次再重跑；DaoCloud 不通就自己指一个库镜像，如 KNAV_DB_IMAGE=mysql:8.4；确定这台机能直连 Docker Hub 就 KNAV_CN=0 重跑"
+    else
+      die "拉镜像失败（$KNAV_IMAGE + $KNAV_DB_IMAGE）。Docker Hub 拉不动就 KNAV_CN=1 重跑走国内源；仓库里还没有这个 tag 就改用本地构建的镜像（KNAV_IMAGE=knav:local，见 docs/docker.md 第 3 节）"
+    fi
+  fi
 fi
 
 log "启动服务（首次建库会跑迁移，约 1 分钟）"
@@ -201,6 +279,8 @@ else
   echo "  站长密码   $ENV_FILE 里 ADMIN_PASSWORD 为空，未自动建号（用 create-admin.ts 或后台建）"
 fi
 echo
+echo "  镜像来源   $KNAV_IMAGE ＋ $KNAV_DB_IMAGE"
+echo "             （想固定用哪边：KNAV_CN=1 国内源 / KNAV_CN=0 直连 Docker Hub；改完重跑安装命令即可）"
 echo "  日常操作   cd $KNAV_DIR"
 echo "             $COMPOSE ps            # 状态"
 echo "             $COMPOSE logs -f knav  # 日志"

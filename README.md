@@ -136,7 +136,7 @@ knav 是一个基于 Next.js 15 与 MySQL 8 的导航站 / 资源分享站点系
 | 邮件 | nodemailer（SMTP） |
 | Markdown | marked + HTML 白名单过滤 |
 | 样式 | 原生 CSS 变量设计系统，无 UI 框架 |
-| 容器化 | `Dockerfile`（多阶段，standalone 产物）+ `compose.yaml`，`compose.mysql.yaml` 附 MySQL 8.4，`compose.mariadb.yaml` 附 MariaDB 11，`compose.host.yaml` 对接宿主机已有的库，`docker/install.sh` 一行命令装完 |
+| 容器化 | `Dockerfile`（多阶段，standalone 产物）+ `compose.yaml`，`compose.mysql.yaml` 附 MySQL 8.4，`compose.mariadb.yaml` 附 MariaDB 11，`compose.host.yaml` 对接宿主机已有的库，`docker/install.sh` 一行命令装完（国内自动回退 Gitee 源与阿里云 ACR 镜像） |
 
 ---
 
@@ -300,7 +300,8 @@ Dockerfile        镜像构建（多阶段，standalone 产物）
 .dockerignore     构建上下文：排除 .env、node_modules、uploads、数据库导出等
 docker/
   entrypoint.sh   容器入口：可选同步表结构后启动服务
-  install.sh      一行命令安装：生成 .env、起应用 + 数据库、等健康并打印口令
+  install.sh      一行命令安装：生成 .env、起应用 + 数据库、等健康并打印口令（GitHub 不通自动换 Gitee，
+                  探测到 Docker Hub 不可达拉阿里云 ACR + DaoCloud 的库镜像）
   hub-overview.md Docker Hub「概述」正文的唯一来源，发布工作流每次 PATCH 上去
 compose.yaml      应用编排；compose.mysql.yaml 附 MySQL 8.4，compose.mariadb.yaml 附 MariaDB 11；compose.host.yaml 走 host 网络对接宿主机的库
 ```
@@ -723,6 +724,14 @@ cd /opt/knav && bash scripts/deploy.sh --if-changed
 ```bash
 curl -fsSL https://raw.githubusercontent.com/KuwiNet/knav/main/docker/install.sh | sudo bash
 # 换 MariaDB、换端口：sudo KNAV_DB=mariadb KNAV_PORT=8080 bash 同上
+```
+
+国内机器不用改命令：compose 文件拉不到 GitHub 会自动换 Gitee 的同一份镜像仓库，探测到 Docker Hub
+不可达时镜像换成阿里云 ACR 与 DaoCloud 加速的 `mysql`/`mariadb`（`KNAV_CN=1` / `KNAV_CN=0` 可强制）。
+脚本本身也能直接从 Gitee 取：
+
+```bash
+curl -fsSL https://gitee.com/kuwinet/knav/raw/main/docker/install.sh | sudo bash
 ```
 
 仓库带 `Dockerfile`、`docker/entrypoint.sh`、`docker/install.sh` 与四份 compose 文件

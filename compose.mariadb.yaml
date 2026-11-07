@@ -15,7 +15,8 @@ services:
         condition: service_healthy
 
   db:
-    image: mariadb:11
+    # 默认拉 Docker Hub 的 mariadb:11；国内机器由 install.sh 写成可直达的镜像地址
+    image: ${KNAV_DB_IMAGE:-mariadb:11}
     restart: unless-stopped
     command:
       - --character-set-server=utf8mb4
