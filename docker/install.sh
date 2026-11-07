@@ -25,7 +25,7 @@ KNAV_CN="${KNAV_CN:-auto}"                        # auto=探到 Docker Hub 不�
 KNAV_RAW_BASE="${KNAV_RAW_BASE:-}"                # 手动指定 compose 文件的下载地址；留空按探测结果排 GitHub / Gitee 先后
 KNAV_IMAGE="${KNAV_IMAGE:-}"                      # 应用镜像；留空时按 KNAV_CN 选 Hub 或阿里云 ACR
 KNAV_DB_IMAGE="${KNAV_DB_IMAGE:-}"                # 数据库镜像；留空时按 KNAV_CN 选官方或国内镜像
-KNAV_ACR_IMAGE="${KNAV_ACR_IMAGE:-registry.cn-hangzhou.aliyuncs.com/kuwinet/knav}"   # 国内应用镜像；命名空间要和阿里云上建的一致
+KNAV_ACR_IMAGE="${KNAV_ACR_IMAGE:-crpi-31z6v1rz7y15fca2.cn-beijing.personal.cr.aliyuncs.com/kuwinet/knav}"   # 国内应用镜像；控制台给的实例域名，命名空间要和阿里云上建的一致
 KNAV_ADMIN_USER="${KNAV_ADMIN_USER:-admin}"
 KNAV_ADMIN_EMAIL="${KNAV_ADMIN_EMAIL:-}"
 KNAV_SITE_URL="${KNAV_SITE_URL:-}"

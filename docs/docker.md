@@ -99,7 +99,7 @@ curl -fsSL https://gitee.com/kuwinet/knav/raw/main/docker/install.sh | sudo bash
   签名的地址，所以必须带 `-L`，别把跳转后的地址抄进文档。
 - **镜像**：`KNAV_CN=auto`（默认）先探一次 `registry-1.docker.io/v2/`——只看拿不拿得到 HTTP 状态码，
   401 说明链路是通的，压根拿不到码才算不通。判定为国内时换成：应用镜像
-  `registry.cn-hangzhou.aliyuncs.com/kuwinet/knav`（阿里云 ACR，见 2.6），数据库镜像
+  `crpi-31z6v1rz7y15fca2.cn-beijing.personal.cr.aliyuncs.com/kuwinet/knav`（阿里云 ACR 个人版，北京实例，见 2.6），数据库镜像
   `docker.m.daocloud.io/library/mysql:8.4`（DaoCloud 的 Docker Hub 加速，`library/` 前缀别漏）。
   探测只花 8 秒；想固定一边就 `KNAV_CN=1` / `KNAV_CN=0`（`0` 只是不换成国内镜像，compose 文件
   拉不动时仍会兜底去 Gitee 拿一份，内容是一样的）。
@@ -180,18 +180,20 @@ curl -s -o /dev/null -w "$CSS -> %{http_code}\n" "http://127.0.0.1:3000$CSS"   #
 |---|---|---|
 | Docker Hub | `kuwinet/knav` | `latest`、版本号（如 `0.1.4`）、`main` |
 | GHCR | `ghcr.io/KuwiNet/knav` | 同上 |
-| 阿里云 ACR | `registry.cn-hangzhou.aliyuncs.com/kuwinet/knav` | 同上；国内机器直连可用 |
+| 阿里云 ACR（个人版·北京实例） | `crpi-31z6v1rz7y15fca2.cn-beijing.personal.cr.aliyuncs.com/kuwinet/knav` | 同上；国内机器直连可用 |
 
 ACR 是可选的：配了 Secrets `ACR_USERNAME` / `ACR_PASSWORD` 才推，没配就跳过并在日志里说明原因
-（不配不影响 Hub 与 GHCR）。用户名是控制台「访问凭证」里那串**账号全名**，RAM 子账号形如
-`user@主账号全名`；密码要用**固定密码**，临时凭证撑不完一次多架构构建。仓库和命名空间要在控制台先建好，
-命名空间得是 `kuwinet`（与 `ACR_IMAGE` 一致），并设为公开才能匿名拉。
+（不配不影响 Hub 与 GHCR）。地址取仓库变量 `ACR_IMAGE`（`gh variable set ACR_IMAGE --body <完整镜像地址>`），
+换实例/换地域只改这个变量，不用动工作流文件——工作流文件要 `workflow` scope 才能改，变量不用。
+用户名是控制台那串 `docker login --username=` 后面的**账号全名**（形如 `xxx@126.com`，RAM 子账号是
+`user@主账号别名`）；密码用**固定密码**，临时凭证撑不完一次多架构构建。命名空间和仓库都要先建好，
+命名空间得是 `kuwinet`（与镜像地址一致）并设为公开才能匿名拉。
 
 没推 ACR 之前国内机器也装得下去：一键脚本发现 ACR 拉不到会自动补试 Docker Hub 官方名，配了加速器的
 守护进程那一步就能成（见 2.1.1）。推成之后这一行才算真正生效，验证命令：
 
 ```bash
-docker manifest inspect registry.cn-hangzhou.aliyuncs.com/kuwinet/knav:latest
+docker manifest inspect crpi-31z6v1rz7y15fca2.cn-beijing.personal.cr.aliyuncs.com/kuwinet/knav:latest
 ```
 
 触发方式两种：打 `v*` tag 自动发布（出 `<版本>` + `latest`），或在 Actions 里手动运行
@@ -577,9 +579,16 @@ compose 只在 `up -d` 时重算环境变量，改完执行 `docker compose up -
   原值不动；老 `.env` 里根本没有这两行时，兜底成功后追加进去而不是改错别处
 - 优先级三条也单独验过：已有 `.env`（`kuwinet/knav:0.1.3` + `mysql:8.4`）时即使 `auto` 判定国内也不换仓库；
   老 `.env` 没有 `KNAV_DB_IMAGE` 行时读回空、退回本次默认；命令行 `KNAV_IMAGE=...` 压过 `.env` 与探测
-- **待真机确认**：ACR 命名空间还没建，匿名 `GET registry.cn-hangzhou.aliyuncs.com/v2/kuwinet/knav/manifests/latest`
-  拿到的是 401 + `dockerauth.cn-hangzhou.aliyuncs.com` 的鉴权跳转（仓库不存在/未公开就是这个表现），
-  所以现在国内机器的首次安装靠的是上面那步「补试官方名」。配好凭据推一次镜像后再验 `KNAV_CN=1` 走 ACR 的路
+- **ACR 地址已按真机核对更正**（2026-11-07）：先前按通用写法填的 `registry.cn-hangzhou.aliyuncs.com`，
+  实测这个账号的个人版实例在**北京**，控制台给的登录域名是
+  `crpi-31z6v1rz7y15fca2.cn-beijing.personal.cr.aliyuncs.com`；两个域名的鉴权头里 `service` 都是
+  `registry.aliyuncs.com:cn-beijing:26842`（同一个后端，只是通用域名要自己拼地域），杭州那个域名指向的是
+  另一地域、里面没有这个命名空间。Run 42353136580 就是挂在这一步的登录上
+  （`Get ".../v2/": unauthorized: authentication required`），Hub 与 GHCR 未受影响。
+- **待真机确认**：命名空间 `kuwinet` + 仓库 `knav` 还没在北京实例里建好，匿名取
+  `.../v2/kuwinet/knav/manifests/latest` 仍是 401（不存在/未公开都是这个表现），所以现在国内机器的首次安装
+  靠的是上面那步「补试官方名」。凭据填对（用户名＝控制台 `--username=` 那串账号全名，密码＝固定密码）
+  并推一次镜像后，再验 `KNAV_CN=1` 走 ACR 的路
 
 **一键安装脚本**（开发机无 Docker，用桩程序 `docker`/`curl`/`ip`/`ss`/`openssl` 跑完整流程验证）：
 
