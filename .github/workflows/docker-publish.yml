@@ -1,13 +1,14 @@
-# knav 镜像发布：推 Docker Hub + GHCR（多架构 amd64/arm64）。
-#
-# 这个文件放在 docker/ 而不是 .github/workflows/ 是因为 KuwiNet 的 API token 没有
-# `workflow` 权限，agent 提交 .github/workflows/* 会被 GitHub 直接拒绝。
-# 启用方式：把本文件原样复制到 .github/workflows/docker-publish.yml 并提交一次，
-# 同时在仓库 Secrets 里加 DOCKERHUB_USERNAME / DOCKERHUB_TOKEN（不加就只推 GHCR）。
+# knav 镜像发布：推 Docker Hub + GHCR（多架构 amd64/arm64），并把仓库概述同步到 Hub。
 #
 # 触发：打 v* tag 时自动跑；也可在 Actions 页面手动运行（workflow_dispatch）。
-# 产物 tag：<版本>（如 0.1.4）、latest（tag 与默认分支都打）、分支名（手动运行）。
-# 没有 DOCKERHUB_USERNAME 这个 Secret 时只推 GHCR，Hub 那步会跳过并打印跳过原因。
+# 产物 tag：<版本>（如 0.1.4）与 <主>.<次>（如 0.1）、latest（tag 与默认分支都打）、分支名（手动运行）。
+# 版本号标签只有推 v* tag 那次才有：type=semver 解析的是 refs/tags/v*，而 workflow_dispatch 的
+# github.ref_type 恒为 branch，手动跑只出 latest + 分支名。
+# 没有 DOCKERHUB_USERNAME 这个 Secret 时只推 GHCR，Hub 相关步骤会跳过并打印跳过原因。
+#
+# 改这个文件需要令牌带 `workflow` scope：只有 `repo` 会被 GitHub 拒（git push 报
+# "resolves to ... outside of allowed paths"，REST 写返回 404 而不是 403）。
+# 仓库里只留这一份，不再在 docker/ 下放第二份副本，避免两处漂移。
 
 name: Publish container image
 
@@ -89,3 +90,50 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # Hub 的「概述」页就是仓库对象的 full_description 字段，个人账号没有自动读 README 的开关，
+  # 空着就显示 "No overview available"。这里以 docker/hub-overview.md 为唯一来源，每次发布 PATCH 一次，
+  # 免得仓库文档和网页上粘贴的那份各说各话。不依赖镜像构建，所以和 build 并行。
+  hub-description:
+    name: 同步 Docker Hub 概述
+    runs-on: ubuntu-latest
+    env:
+      # Secret 不能直接写在 if 里比较（secrets 上下文在部分场景取不到值），先落到 job 级 env
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      SUMMARY: knav 导航站：Next.js + MySQL 的网址收藏 / 文章 / 软件下载系统，自带账号体系、投稿审核与完整后台
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: PATCH 仓库概述
+        run: |
+          set -euo pipefail
+          if [ -z "${DOCKERHUB_USERNAME:-}" ]; then
+            echo "::notice::未配置 DOCKERHUB_USERNAME，跳过 Hub 概述同步"
+            exit 0
+          fi
+
+          # 用 PAT 换一个 Hub API 的 JWT：scope 要 pull,push，只给 pull 的令牌改不了描述
+          jwt="$(curl -fsS -u "${DOCKERHUB_USERNAME}:${DOCKERHUB_TOKEN}" \
+            "https://auth.docker.io/token?service=registry.docker.io&scope=repository:${HUB_IMAGE}:pull,push" \
+            | sed -n 's/.*"token":"\([^"]*\)".*/\1/p' || true)"
+          if [ -z "$jwt" ]; then
+            echo "换不到 Hub API token：确认 DOCKERHUB_USERNAME / DOCKERHUB_TOKEN 是否配对、令牌是否还有 Read/Write 权限" >&2
+            exit 1
+          fi
+
+          # JSON 交给 python 转义：正文里有反引号、引号和多行，手拼字符串迟早踩坑
+          payload="$(python3 -c 'import json,sys;print(json.dumps({"description":sys.argv[1],"full_description":open(sys.argv[2],encoding="utf-8").read()}))' \
+            "$SUMMARY" docker/hub-overview.md)"
+
+          code="$(curl -sS -o /tmp/hub-resp.json -w '%{http_code}' -X PATCH \
+            -H "Authorization: Bearer $jwt" \
+            -H 'Content-Type: application/json' \
+            --data "$payload" \
+            "https://hub.docker.com/v2/repositories/${HUB_IMAGE}/")"
+          if [ "$code" != 200 ] && [ "$code" != 201 ]; then
+            echo "Hub 概述更新失败：HTTP $code" >&2
+            cat /tmp/hub-resp.json >&2
+            exit 1
+          fi
+          echo "Hub 概述已更新（来源 docker/hub-overview.md，$(wc -c < docker/hub-overview.md) 字节）"
