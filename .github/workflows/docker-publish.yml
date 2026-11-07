@@ -1,12 +1,13 @@
 # knav 镜像发布：推 Docker Hub + GHCR（多架构 amd64/arm64），并把仓库概述同步到 Hub。
-#       配了 ACR_USERNAME / ACR_PASSWORD 时同时推阿里云 ACR，供国内机器直接拉。
+#       配了 Secrets ACR_USERNAME / ACR_PASSWORD **且** 仓库变量 ACR_IMAGE 有值时同时推阿里云 ACR，
+#       供国内机器直接拉；ACR 登录失败只跳过它，不影响 Hub 与 GHCR。
 #
 # 触发：打 v* tag 时自动跑；也可在 Actions 页面手动运行（workflow_dispatch）。
 # 产物 tag：<版本>（如 0.1.4）与 <主>.<次>（如 0.1）、latest（tag 与默认分支都打）、分支名（手动运行）。
 # 版本号标签只有推 v* tag 那次才有：type=semver 解析的是 refs/tags/v*，而 workflow_dispatch 的
 # github.ref_type 恒为 branch，手动跑只出 latest + 分支名。
 # 没有 DOCKERHUB_USERNAME 这个 Secret 时只推 GHCR，Hub 相关步骤会跳过并打印跳过原因；
-# 没有 ACR_USERNAME 时同理跳过 ACR。
+# ACR 同理（见上面的 continue-on-error）。
 #
 # 改这个文件需要令牌带 `workflow` scope：只有 `repo` 会被 GitHub 拒（git push 报
 # "resolves to ... outside of allowed paths"，REST 写返回 404 而不是 403）。
@@ -40,9 +41,10 @@ env:
   # Docker Hub 命名空间；改名要同步 docker/install.sh 里的默认镜像地址
   HUB_IMAGE: kuwinet/knav
   GHCR_IMAGE: ghcr.io/${{ github.repository }}
-  # 国内机器直连 Docker Hub 拉不动，所以再加一个阿里云 ACR。命名空间要和「容器镜像服务」里建的一致
-  ACR_REGISTRY: registry.cn-hangzhou.aliyuncs.com
-  ACR_IMAGE: registry.cn-hangzhou.aliyuncs.com/kuwinet/knav
+  # 国内机器直连 Docker Hub 拉不动，所以再加一个阿里云 ACR（个人版）。完整镜像地址放在仓库变量里，
+  # 换实例/换地域只改变量：gh variable set ACR_IMAGE --repo KuwiNet/knav --body <registry>/<命名空间>/knav
+  # （工作流文件要有 workflow scope 的令牌才能改，变量不用）。命名空间要和「容器镜像服务」里建的一致
+  ACR_IMAGE: ${{ vars.ACR_IMAGE }}
 
 jobs:
   build:
@@ -61,38 +63,6 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: 计算推送目标
-        id: registries
-        run: |
-          # 没配 ACR 凭据就不把这个仓库放进 tags，否则 buildx 会因为推不上去整体失败
-          imgs="$(printf '%s\n%s' "$HUB_IMAGE" "$GHCR_IMAGE")"
-          if [ -n "${ACR_USERNAME:-}" ]; then
-            imgs="$(printf '%s\n%s' "$imgs" "$ACR_IMAGE")"
-          else
-            echo "::notice::未配置 ACR_USERNAME，本次不推阿里云 ACR（国内机器仍只能走 Docker Hub）"
-          fi
-          {
-            echo "images<<EOF"
-            echo "$imgs"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-          echo "本次推送："; echo "$imgs"
-
-      - name: 计算镜像标签
-        uses: docker/metadata-action@v5
-        id: meta
-        with:
-          images: ${{ steps.registries.outputs.images }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=ref,event=tag
-            type=ref,event=branch
-            # latest 两条都要：一键安装脚本默认拉 kuwinet/knav:latest，
-            # 而 metadata 的 {{is_default_branch}} 在 tag 事件下是 false，光靠它推不出 latest
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
-
       - name: 登录 Docker Hub
         if: ${{ env.DOCKERHUB_USERNAME != '' }}
         uses: docker/login-action@v3
@@ -107,15 +77,61 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # ACR 的用户名是「账号全名」（控制台「访问凭证」页显示的那串，RAM 子账号形如 user@主账号全名），
+      # ACR 是「可选」的，所以这一步必须不能拖垮整条发布：Run 42353136580 就是密码不对，
+      # 登录失败把后面的构建整个带走，Hub 与 GHCR 一个都没推上去。continue-on-error 只把
+      # 真实结果留在 steps.*.outcome 里（conclusion 会被改成 success），下一步据此决定要不要带上 ACR。
+      # 用户名是控制台 docker login --username= 后面那串账号全名（RAM 子账号形如 user@主账号别名），
       # 密码要设「固定密码」——临时凭证几十分钟就过期，撑不完一次多架构构建
+      - name: 解析 ACR 地址
+        if: ${{ env.ACR_USERNAME != '' && env.ACR_IMAGE != '' }}
+        id: acr_addr
+        run: printf 'registry=%s\n' "${ACR_IMAGE%%/*}" >> "$GITHUB_OUTPUT"
+
       - name: 登录阿里云 ACR
-        if: ${{ env.ACR_USERNAME != '' }}
+        if: ${{ steps.acr_addr.outputs.registry != '' }}
+        id: acr
+        continue-on-error: true
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.ACR_REGISTRY }}
+          registry: ${{ steps.acr_addr.outputs.registry }}
           username: ${{ secrets.ACR_USERNAME }}
           password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: 计算推送目标
+        id: registries
+        env:
+          ACR_OUTCOME: ${{ steps.acr.outcome }}
+        run: |
+          imgs="$(printf '%s\n%s' "$HUB_IMAGE" "$GHCR_IMAGE")"
+          if [ "${ACR_OUTCOME:-none}" = success ]; then
+            imgs="$(printf '%s\n%s' "$imgs" "$ACR_IMAGE")"
+          elif [ -z "${ACR_USERNAME:-}" ] || [ -z "${ACR_IMAGE:-}" ]; then
+            echo "::notice::未配置 ACR 凭据或仓库变量 ACR_IMAGE，本次不推阿里云 ACR（国内机器仍走 Docker Hub 加速）"
+          else
+            echo "::warning::ACR 登录失败（用户名要是账号全名、密码要是固定密码，地域要和控制台一致），本次跳过推送 ACR，Hub 与 GHCR 照常发布"
+          fi
+          {
+            echo "images<<EOF"
+            echo "$imgs"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "本次推送："; echo "$imgs"
+
+      # 标签规则没变，只是挪到登录之后：images 要等上一步确定推送目标才能算
+      - name: 计算镜像标签
+        uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ steps.registries.outputs.images }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=ref,event=tag
+            type=ref,event=branch
+            # latest 两条都要：一键安装脚本默认拉 kuwinet/knav:latest，
+            # 而 metadata 的 {{is_default_branch}} 在 tag 事件下是 false，光靠它推不出 latest
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
 
       - name: 构建并推送
         uses: docker/build-push-action@v6
