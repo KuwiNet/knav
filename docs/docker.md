@@ -201,9 +201,18 @@ docker manifest inspect crpi-31z6v1rz7y15fca2.cn-beijing.personal.cr.aliyuncs.co
 `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`，没配时那一步自动跳过、只推 GHCR；GHCR 用工作流自带的
 `GITHUB_TOKEN`，不需要额外配置。
 
-改这个文件需要令牌带 `workflow` scope（只有 `repo` 会被 GitHub 拒：`git push` 被拒、REST 写返回 404），
-所以用带 `workflow` 的经典 PAT 走 Contents API 写（`gh api -X PUT repos/.../contents/.github/workflows/...`），
-或在网页上直接编辑。仓库里不留第二份副本，避免两处不一致。
+改这个文件的门槛比看上去低：**只有 HTTPS + 经典 PAT 才要求令牌带 `workflow` scope**（只有 `repo` 会被拒：
+`git push` 报 "resolves to ... outside of allowed paths"，REST 写返回 404 而不是 403）。三条免令牌的路：
+
+```bash
+# ① 用 SSH 推（key 是账号身份就行，不看 scope）——本次改动就是这么落地的
+git add .github/workflows/docker-publish.yml && git commit -m "ci: ..."
+git push git@github.com:KuwiNet/knav.git HEAD:main
+# ② 网页上编辑：Actions → Publish container image → 编辑此文件 → 提交（会自己开一个分支/直接提交）
+# ③ 只改镜像地址时不用碰这个文件：它是仓库变量，gh variable set ACR_IMAGE --repo KuwiNet/knav --body <地址>
+```
+
+仓库里不留第二份副本，避免两处不一致。
 
 ```bash
 curl -sS https://raw.githubusercontent.com/KuwiNet/knav/main/.github/workflows/docker-publish.yml   # 看当前内容
