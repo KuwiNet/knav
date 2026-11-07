@@ -1,10 +1,12 @@
 # knav 镜像发布：推 Docker Hub + GHCR（多架构 amd64/arm64），并把仓库概述同步到 Hub。
+#       配了 ACR_USERNAME / ACR_PASSWORD 时同时推阿里云 ACR，供国内机器直接拉。
 #
 # 触发：打 v* tag 时自动跑；也可在 Actions 页面手动运行（workflow_dispatch）。
 # 产物 tag：<版本>（如 0.1.4）与 <主>.<次>（如 0.1）、latest（tag 与默认分支都打）、分支名（手动运行）。
 # 版本号标签只有推 v* tag 那次才有：type=semver 解析的是 refs/tags/v*，而 workflow_dispatch 的
 # github.ref_type 恒为 branch，手动跑只出 latest + 分支名。
-# 没有 DOCKERHUB_USERNAME 这个 Secret 时只推 GHCR，Hub 相关步骤会跳过并打印跳过原因。
+# 没有 DOCKERHUB_USERNAME 这个 Secret 时只推 GHCR，Hub 相关步骤会跳过并打印跳过原因；
+# 没有 ACR_USERNAME 时同理跳过 ACR。
 #
 # 改这个文件需要令牌带 `workflow` scope：只有 `repo` 会被 GitHub 拒（git push 报
 # "resolves to ... outside of allowed paths"，REST 写返回 404 而不是 403）。
@@ -35,9 +37,12 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Docker Hub 命名空间；改名要同步 docker/install.sh 里的 KNAV_IMAGE 默认值
+  # Docker Hub 命名空间；改名要同步 docker/install.sh 里的默认镜像地址
   HUB_IMAGE: kuwinet/knav
   GHCR_IMAGE: ghcr.io/${{ github.repository }}
+  # 国内机器直连 Docker Hub 拉不动，所以再加一个阿里云 ACR。命名空间要和「容器镜像服务」里建的一致
+  ACR_REGISTRY: registry.cn-hangzhou.aliyuncs.com
+  ACR_IMAGE: registry.cn-hangzhou.aliyuncs.com/kuwinet/knav
 
 jobs:
   build:
@@ -48,6 +53,7 @@ jobs:
       # Secret 不能直接写在 if 里比较（secrets 上下文在部分场景取不到值），
       # 先落到 job 级 env，再用它判断有没有配 Hub 凭据
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
     steps:
       - uses: actions/checkout@v4
 
@@ -55,13 +61,28 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
+      - name: 计算推送目标
+        id: registries
+        run: |
+          # 没配 ACR 凭据就不把这个仓库放进 tags，否则 buildx 会因为推不上去整体失败
+          imgs="$(printf '%s\n%s' "$HUB_IMAGE" "$GHCR_IMAGE")"
+          if [ -n "${ACR_USERNAME:-}" ]; then
+            imgs="$(printf '%s\n%s' "$imgs" "$ACR_IMAGE")"
+          else
+            echo "::notice::未配置 ACR_USERNAME，本次不推阿里云 ACR（国内机器仍只能走 Docker Hub）"
+          fi
+          {
+            echo "images<<EOF"
+            echo "$imgs"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "本次推送："; echo "$imgs"
+
       - name: 计算镜像标签
         uses: docker/metadata-action@v5
         id: meta
         with:
-          images: |
-            ${{ env.HUB_IMAGE }}
-            ${{ env.GHCR_IMAGE }}
+          images: ${{ steps.registries.outputs.images }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -85,6 +106,16 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ACR 的用户名是「账号全名」（控制台「访问凭证」页显示的那串，RAM 子账号形如 user@主账号全名），
+      # 密码要设「固定密码」——临时凭证几十分钟就过期，撑不完一次多架构构建
+      - name: 登录阿里云 ACR
+        if: ${{ env.ACR_USERNAME != '' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.ACR_REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
 
       - name: 构建并推送
         uses: docker/build-push-action@v6
