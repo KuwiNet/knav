@@ -292,7 +292,7 @@ scripts/
   db-create.ts / db-grants.ts 建库与授权
 .github/
   workflows/deploy.yml  推送 main 后构建并部署（可选）
-  workflows/docker-publish.yml  镜像发布：打 v* tag 或手动运行，推 Docker Hub + GHCR
+  workflows/docker-publish.yml  镜像发布：打 v* tag 或手动运行，推 Docker Hub + GHCR，并同步 Hub 仓库概述
 public/
   avatars/        内置头像 SVG
   uploads/        素材库本地化后的文件（运行数据，不入库）
@@ -301,6 +301,7 @@ Dockerfile        镜像构建（多阶段，standalone 产物）
 docker/
   entrypoint.sh   容器入口：可选同步表结构后启动服务
   install.sh      一行命令安装：生成 .env、起应用 + 数据库、等健康并打印口令
+  hub-overview.md Docker Hub「概述」正文的唯一来源，发布工作流每次 PATCH 上去
 compose.yaml      应用编排；compose.mysql.yaml 附 MySQL 8.4，compose.mariadb.yaml 附 MariaDB 11；compose.host.yaml 走 host 网络对接宿主机的库
 ```
 

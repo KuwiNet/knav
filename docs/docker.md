@@ -162,6 +162,23 @@ gh workflow run "Publish container image" --repo KuwiNet/knav --ref main        
 
 ---
 
+### 2.7 Docker Hub 上的「概述」
+
+Hub 的概述页不会自动读 README：个人账号的仓库没有这层联动，`full_description` 空着就只显示
+「No overview available」。概述正文的唯一来源是 `docker/hub-overview.md`，发布工作流里并行的
+`同步 Docker Hub 概述` job 每次都会拿它 PATCH 一次仓库对象，改完文案跟着下一次发布自动生效。
+
+```bash
+gh workflow run "Publish container image" --repo KuwiNet/knav --ref main   # 只想刷新概述，也跑这个
+```
+
+PATCH 前先用 `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` 换一个 Hub API 的 JWT，scope 必须带 `push`
+（只有 `pull` 的令牌读得到改不动），所以不需要为它另配凭据；未配这两个 Secret 时该 job 直接跳过。
+正文里的图片要写绝对地址（Hub 会代理一份到自己那边），仓库相对路径在概述里显示不出来。
+
+
+---
+
 ## 3. 手动 docker run
 
 ```bash

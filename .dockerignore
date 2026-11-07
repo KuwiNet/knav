@@ -47,5 +47,6 @@ compose.host.yaml
 compose.mariadb.yaml
 docker/compose*
 docker/install.sh
+docker/hub-overview.md
 docs
 README.md
