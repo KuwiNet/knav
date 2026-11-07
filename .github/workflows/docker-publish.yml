@@ -1,16 +1,21 @@
-# knav 镜像发布：推 Docker Hub + GHCR（多架构 amd64/arm64），并把仓库概述同步到 Hub。
-#       配了 Secrets ACR_USERNAME / ACR_PASSWORD **且** 仓库变量 ACR_IMAGE 有值时同时推阿里云 ACR，
-#       供国内机器直接拉；ACR 登录失败只跳过它，不影响 Hub 与 GHCR。
+# knav 镜像发布：推 Docker Hub + GHCR + 阿里云 ACR（多架构 amd64/arm64），并把仓库概述同步到 Hub。
+#       ACR 是可选的：配了 Secrets ACR_USERNAME / ACR_PASSWORD **且** 仓库变量 ACR_IMAGE 有值才推，
+#       登录失败只跳过它，不影响 Hub 与 GHCR——国内机器直接拉这个地址。
+#
+# 构建形态：两个架构各一个 job，用各自架构的原生 runner，产物先落 GHCR 的 <tag>-amd64 / <tag>-arm64，
+#       最后一个 job 把它们合成 manifest list 再推三个仓库。
+#       为什么不一个 job 带 platforms=amd64,arm64：x86 runner 上 arm64 只能 qemu 模拟，
+#       实测 Run 42359760772 里 arm64 的「RUN npm ci」87 分钟没跑完（那层缓存也没命中），而 amd64 全程 62 秒。
+#       中间标签只留 GHCR 一处，Hub 的 tag 列表是给用户看的；每次发版 GHCR 多两条 -amd64/-arm64。
 #
 # 触发：打 v* tag 时自动跑；也可在 Actions 页面手动运行（workflow_dispatch）。
 # 产物 tag：<版本>（如 0.1.4）与 <主>.<次>（如 0.1）、latest（tag 与默认分支都打）、分支名（手动运行）。
 # 版本号标签只有推 v* tag 那次才有：type=semver 解析的是 refs/tags/v*，而 workflow_dispatch 的
 # github.ref_type 恒为 branch，手动跑只出 latest + 分支名。
-# 没有 DOCKERHUB_USERNAME 这个 Secret 时只推 GHCR，Hub 相关步骤会跳过并打印跳过原因；
-# ACR 同理（见上面的 continue-on-error）。
+# 没有 DOCKERHUB_USERNAME 这个 Secret 时只推 GHCR，Hub 相关步骤会跳过并打印跳过原因。
 #
-# 改这个文件需要令牌带 `workflow` scope：只有 `repo` 会被 GitHub 拒（git push 报
-# "resolves to ... outside of allowed paths"，REST 写返回 404 而不是 403）。
+# 改这个文件：HTTPS + PAT 推需要令牌带 `workflow` scope（只有 `repo` 会被 GitHub 拒，
+# REST 写还返回 404 而不是 403）；SSH 推不受这条限制。
 # 仓库里只留这一份，不再在 docker/ 下放第二份副本，避免两处漂移。
 
 name: Publish container image
@@ -47,19 +52,91 @@ env:
   ACR_IMAGE: ${{ vars.ACR_IMAGE }}
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    # 只刷新概述时不必陪着跑一次十几分钟的多架构构建
+  # 每个架构单独构建，只推 GHCR 的带后缀标签；两个 job 并行，各自跑在对应架构的 runner 上。
+  # ubuntu-24.04-arm 是 GitHub 对公开仓库免费开放的 arm64 原生 runner，私有仓库用它会直接失败
+  build-arch:
+    name: 构建 ${{ matrix.suffix }}
+    runs-on: ${{ matrix.runs-on }}
+    # 只刷新概述时不必陪着跑一次构建
     if: ${{ github.event.inputs.only_description != 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            suffix: amd64
+            runs-on: ubuntu-24.04
+          - platform: linux/arm64
+            suffix: arm64
+            runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: 登录 GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 这套标签规则和 merge job 那份必须一致，改一处要改两处
+      - name: 计算镜像标签
+        uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.GHCR_IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=ref,event=tag
+            type=ref,event=branch
+            # latest 两条都要：一键安装脚本默认拉 kuwinet/knav:latest，
+            # 而 metadata 的 {{is_default_branch}} 在 tag 事件下是 false，光靠它推不出 latest
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
+
+      - name: 加架构后缀
+        id: arch
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          SUFFIX: ${{ matrix.suffix }}
+        run: |
+          {
+            echo "tags<<EOF"
+            printf '%s\n' "$TAGS" | sed "s|$|-${SUFFIX}|"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: 构建并推送本架构
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          push: true
+          tags: ${{ steps.arch.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # 单架构产物是下一步 imagetools 的输入：带 attestation 时它是个 index 而不是裸 image manifest，
+          # 合成出来的多架构清单里会混进说不清的条目
+          provenance: false
+          sbom: false
+          # scope 按架构分开，两个 job 同时写同一份 GHA 缓存会互相抢
+          # （今天日志里就有 "Unable to reserve cache ... another job may be creating this cache"）
+          cache-from: type=gha,scope=${{ matrix.suffix }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.suffix }}
+
+  # 把两个架构合成 manifest list 推到三个仓库。只搬 manifest 和层，不重新构建，所以 amd64 runner 够用
+  merge:
+    name: 合成多架构并推送
+    runs-on: ubuntu-24.04
+    needs: build-arch
     env:
-      # Secret 不能直接写在 if 里比较（secrets 上下文在部分场景取不到值），
-      # 先落到 job 级 env，再用它判断有没有配 Hub 凭据
+      # Secret 不能直接写在 if 里比较（secrets 上下文在部分场景取不到值），先落到 job 级 env
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
       ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
     steps:
       - uses: actions/checkout@v4
-
-      - uses: docker/setup-qemu-action@v3
 
       - uses: docker/setup-buildx-action@v3
 
@@ -77,11 +154,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # ACR 是「可选」的，所以这一步必须不能拖垮整条发布：Run 42353136580 就是密码不对，
-      # 登录失败把后面的构建整个带走，Hub 与 GHCR 一个都没推上去。continue-on-error 只把
-      # 真实结果留在 steps.*.outcome 里（conclusion 会被改成 success），下一步据此决定要不要带上 ACR。
+      # ACR 是「可选」的，所以这一步不能拖垮整条发布：Run 42353136580 就是密码不对，登录失败
+      # 把后面的推送整个带走，Hub 与 GHCR 一个都没推上去。continue-on-error 只把真实结果留在
+      # steps.*.outcome 里（conclusion 会被改成 success），下一步据此决定要不要带上 ACR。
       # 用户名是控制台 docker login --username= 后面那串账号全名（RAM 子账号形如 user@主账号别名），
-      # 密码要设「固定密码」——临时凭证几十分钟就过期，撑不完一次多架构构建
+      # 密码要设「固定密码」——临时凭证几十分钟就过期，撑不完一次发布
       - name: 解析 ACR 地址
         if: ${{ env.ACR_USERNAME != '' && env.ACR_IMAGE != '' }}
         id: acr_addr
@@ -117,32 +194,59 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "本次推送："; echo "$imgs"
 
-      # 标签规则没变，只是挪到登录之后：images 要等上一步确定推送目标才能算
+      # 标签规则和 build-arch 那份一致；这里只按 GHCR 算，因为带架构后缀的中间产物只在 GHCR，
+      # 三个目标地址由上一步的 images 列表拼出来
       - name: 计算镜像标签
         uses: docker/metadata-action@v5
         id: meta
         with:
-          images: ${{ steps.registries.outputs.images }}
+          images: ${{ env.GHCR_IMAGE }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=ref,event=tag
             type=ref,event=branch
-            # latest 两条都要：一键安装脚本默认拉 kuwinet/knav:latest，
-            # 而 metadata 的 {{is_default_branch}} 在 tag 事件下是 false，光靠它推不出 latest
             type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
 
-      - name: 构建并推送
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: 合成 manifest list 并推送
+        env:
+          IMAGES: ${{ steps.registries.outputs.images }}
+          SRCS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          n=0
+          for src in $SRCS; do
+            tag="${src##*:}"
+            args=()
+            for img in $IMAGES; do args+=(-t "$img:$tag"); done
+            echo "== $tag => ${args[*]//-t /}"
+            docker buildx imagetools create "${args[@]}" "$src-amd64" "$src-arm64"
+            n=$((n + 1))
+          done
+          echo "本次合成 $n 个标签"
+
+      # 产物级核对：每个目标仓库、每个标签都要同时看到 amd64 和 arm64。
+      # 光打印不够——只出一个架构时 grep 照样成功，得自己判
+      - name: 核对各仓库的架构清单
+        env:
+          IMAGES: ${{ steps.registries.outputs.images }}
+          SRCS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          bad=0
+          for src in $SRCS; do
+            tag="${src##*:}"
+            for img in $IMAGES; do
+              archs="$(docker manifest inspect "$img:$tag" \
+                | grep -o '"architecture": *"[a-z0-9]*"' | sed 's/.*"\([a-z0-9]*\)"$/\1/' | sort | tr '\n' ' ')"
+              case "$archs" in
+                *amd64*arm64*) printf 'OK   %s:%s -> %s\n' "$img" "$tag" "$archs" ;;
+                *) printf 'FAIL %s:%s -> %s\n' "$img" "$tag" "${archs:-空}" >&2; bad=1 ;;
+              esac
+            done
+          done
+          [ "$bad" = 0 ] || { echo "有目标仓库的清单里架构不全，见上面 FAIL 行" >&2; exit 1; }
 
   # Hub 的「概述」页就是仓库对象的 full_description 字段，个人账号没有自动读 README 的开关，
   # 空着就显示 "No overview available"。这里以 docker/hub-overview.md 为唯一来源，每次发布 PATCH 一次，
