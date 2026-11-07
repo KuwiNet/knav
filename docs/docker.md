@@ -52,8 +52,8 @@ curl -fsSL https://raw.githubusercontent.com/KuwiNet/knav/main/docker/install.sh
 | `KNAV_DIR` | `/opt/knav` | 放 compose 文件与 `.env` 的目录 |
 | `KNAV_IMAGE` | `kuwinet/knav:<标签>` | 应用镜像；标签跟着 `KNAV_REF` 走（`main`→`latest`，`v0.1.4`→`0.1.4`）。想用本地构建的镜像改成 `knav:local` |
 | `KNAV_DB_IMAGE` | `mysql:8.4` / `mariadb:11` | 数据库镜像地址，换仓库前缀不改版本 |
-| `KNAV_CN` | `auto` | 国内源开关：`auto` 探测、`1` 强制国内、`0` 只用国外，见 2.1.1 |
-| `KNAV_RAW_BASE` | 空 | 手动指定 compose 文件的下载地址；留空按 GitHub→Gitee 依次试 |
+| `KNAV_CN` | `auto` | 国内源开关：`auto` 探测、`1` 强制国内、`0` 镜像只用国外，见 2.1.1 |
+| `KNAV_RAW_BASE` | 空 | 手动指定 compose 文件的下载地址；留空时按探测结果排 GitHub / Gitee 的先后 |
 | `KNAV_SITE_URL` | 自动探测 | 公网地址 > 内网地址 > `127.0.0.1`；有域名就直接给域名，例如 `https://nav.example.com` |
 | `KNAV_ADMIN_EMAIL` | 空 | 留空时站长邮箱落成 `admin@knav.local`，配 SMTP 前记得在后台改 |
 | `KNAV_FORCE` | `0` | `1` 才重新生成 `.env`；数据卷已存在时新库口令不会写进已建好的库 |
@@ -93,18 +93,24 @@ curl -fsSL https://raw.githubusercontent.com/KuwiNet/knav/main/docker/install.sh
 curl -fsSL https://gitee.com/kuwinet/knav/raw/main/docker/install.sh | sudo bash
 ```
 
-- **compose 文件**：先试 `raw.githubusercontent.com`，20 秒拿不到就换 `gitee.com/kuwinet/knav/raw/...`，
-  两个都没通才报错，并把试过的地址打出来。Gitee 的 raw 会 302 到带时效签名的地址，所以必须带 `-L`，
-  别把跳转后的地址抄进文档。
+- **compose 文件**：`raw.githubusercontent.com` 和 `gitee.com/kuwinet/knav/raw/...` 两个地址依次试，
+  每个 20 秒上限，两个都没通才报错并把试过的地址打出来。判定为国内时把 Gitee 排在前面——否则两个文件
+  各等一轮 GitHub 超时，那半分钟就是「卡在下载 compose.yaml」的观感。Gitee 的 raw 会 302 到带时效
+  签名的地址，所以必须带 `-L`，别把跳转后的地址抄进文档。
 - **镜像**：`KNAV_CN=auto`（默认）先探一次 `registry-1.docker.io/v2/`——只看拿不拿得到 HTTP 状态码，
   401 说明链路是通的，压根拿不到码才算不通。判定为国内时换成：应用镜像
   `registry.cn-hangzhou.aliyuncs.com/kuwinet/knav`（阿里云 ACR，见 2.6），数据库镜像
   `docker.m.daocloud.io/library/mysql:8.4`（DaoCloud 的 Docker Hub 加速，`library/` 前缀别漏）。
-  探测只花 8 秒；想固定一边就 `KNAV_CN=1` / `KNAV_CN=0`。
+  探测只花 8 秒；想固定一边就 `KNAV_CN=1` / `KNAV_CN=0`（`0` 只是不换成国内镜像，compose 文件
+  拉不动时仍会兜底去 Gitee 拿一份，内容是一样的）。
 - **优先级**：命令行显式给的 `KNAV_IMAGE` / `KNAV_DB_IMAGE` > 已有 `.env` 里的值 > 本次探测的默认值。
   已经装好的站重跑安装不会被探测结果换走镜像仓库，这两个值也都写在 `.env` 里，手改一样生效。
-- ACR 上还没有对应 tag 时脚本会直说「等发布工作流推一次」，不会静默回退到拉不动的 Docker Hub。
-  DaoCloud 只是第三方加速，介意的话用 `KNAV_DB_IMAGE` 指到自己的仓库。
+- **国内镜像拉不到会自动补试一次官方名**：ACR 是这次新加的仓库，很可能还没有对应 tag；而「探测不通」
+  也只说明直连慢，配了 Docker Hub 加速器的机器按官方名 `kuwinet/knav:<同一个 tag>` 反而拉得动。
+  所以判定为国内、且这一组镜像确实是脚本自己的默认值时，失败后会再用官方名试一次（标签不变，不会
+  把钉住的版本换成 `latest`），拉成功就把新地址写回 `.env` 并打印一行说明。用户显式指定或 `.env`
+  沿用旧值时不做这个补试。两组都失败才报错。DaoCloud 只是第三方加速，介意的话用 `KNAV_DB_IMAGE`
+  指到自己的仓库。
 
 ### 2.2 用外部数据库（含现网的云 RDS）
 
@@ -180,6 +186,13 @@ ACR 是可选的：配了 Secrets `ACR_USERNAME` / `ACR_PASSWORD` 才推，没�
 （不配不影响 Hub 与 GHCR）。用户名是控制台「访问凭证」里那串**账号全名**，RAM 子账号形如
 `user@主账号全名`；密码要用**固定密码**，临时凭证撑不完一次多架构构建。仓库和命名空间要在控制台先建好，
 命名空间得是 `kuwinet`（与 `ACR_IMAGE` 一致），并设为公开才能匿名拉。
+
+没推 ACR 之前国内机器也装得下去：一键脚本发现 ACR 拉不到会自动补试 Docker Hub 官方名，配了加速器的
+守护进程那一步就能成（见 2.1.1）。推成之后这一行才算真正生效，验证命令：
+
+```bash
+docker manifest inspect registry.cn-hangzhou.aliyuncs.com/kuwinet/knav:latest
+```
 
 触发方式两种：打 `v*` tag 自动发布（出 `<版本>` + `latest`），或在 Actions 里手动运行
 `Publish container image`（在默认分支上跑，出 `main` + `latest`）。Docker Hub 的登录用仓库 Secrets
@@ -553,14 +566,20 @@ compose 只在 `up -d` 时重算环境变量，改完执行 `docker compose up -
   同一时刻 `raw.githubusercontent.com` 从本机打 25 秒超时 000，正好是现场卡住的那个失败
 - DaoCloud 加速实测：`docker.m.daocloud.io/v2/library/mysql/manifests/8.4` 与 `mariadb:11` 匿名 200，
   但 `kuwinet/knav` 403（只加速官方镜像），所以应用镜像仍要走 ACR
-- install.sh 桩矩阵 13 个场景全过：`auto` 探到 Hub 不通→ACR+DaoCloud 两个地址都落到 `.env`；
-  `auto` 探到通→`kuwinet/knav:latest` + `mysql:8.4`；`KNAV_CN=1/0` 无视探测；GitHub raw 挂→自动改用
-  Gitee 且仍成功；两个源都挂→报出试过的两个地址并退出 1；`KNAV_REF=v0.1.4`→镜像标签跟着变 `0.1.4`；
-  mariadb 分支→`mariadb:11` 前缀正确；`PULLFAIL`→打印的是国内源那条建议
+- install.sh 桩矩阵 16 个场景全过：`auto` 探到 Hub 不通→ACR+DaoCloud 两个地址都落到 `.env`，且 compose
+  文件改为先试 Gitee；`auto` 探到通→`kuwinet/knav:latest` + `mysql:8.4`，先试 GitHub；`KNAV_CN=1/0` 无视探测；
+  GitHub raw 挂→自动改用 Gitee 且仍成功；两个源都挂→报出试过的两个地址并退出 1；`KNAV_REF=v0.1.4`→镜像标签跟着变 `0.1.4`；
+  mariadb 分支→`mariadb:11` 前缀正确；`KNAV_RAW_BASE` 指定单一地址→不试另一个；显式 `KNAV_IMAGE`→不加兜底组
+- 兜底补试那三种失败形态单独验过：ACR 还没有这个 tag（`PULL_ACR=fail`）→自动换成 `kuwinet/knav:latest` +
+  `mysql:8.4` 拉成功，并把新地址写回 `.env`（`docker pull` 恰好两次）；DaoCloud 挂（`PULL_CN=fail`）同理；
+  两组都失败（`PULLFAIL=1`）→退出 1 并打印两组组合。钉版本时兜底保持版本：`KNAV_REF=v0.1.4` 失败后补试的是
+  `kuwinet/knav:0.1.4`，不会借机升到 `latest`；已有 `.env` 钉在 `0.1.3` 的站即使判定国内也只 pull 一次、
+  原值不动；老 `.env` 里根本没有这两行时，兜底成功后追加进去而不是改错别处
 - 优先级三条也单独验过：已有 `.env`（`kuwinet/knav:0.1.3` + `mysql:8.4`）时即使 `auto` 判定国内也不换仓库；
   老 `.env` 没有 `KNAV_DB_IMAGE` 行时读回空、退回本次默认；命令行 `KNAV_IMAGE=...` 压过 `.env` 与探测
-- **待真机确认**：ACR 命名空间与控制台凭据还没建，所以 `registry.cn-hangzhou.aliyuncs.com/kuwinet/knav`
-  目前拉不到，`KNAV_CN=1` 的首次安装会在「拉取镜像」这一步按预期失败；配好凭据推一次镜像后再验
+- **待真机确认**：ACR 命名空间还没建，匿名 `GET registry.cn-hangzhou.aliyuncs.com/v2/kuwinet/knav/manifests/latest`
+  拿到的是 401 + `dockerauth.cn-hangzhou.aliyuncs.com` 的鉴权跳转（仓库不存在/未公开就是这个表现），
+  所以现在国内机器的首次安装靠的是上面那步「补试官方名」。配好凭据推一次镜像后再验 `KNAV_CN=1` 走 ACR 的路
 
 **一键安装脚本**（开发机无 Docker，用桩程序 `docker`/`curl`/`ip`/`ss`/`openssl` 跑完整流程验证）：
 

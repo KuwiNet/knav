@@ -21,8 +21,8 @@ KNAV_DIR="${KNAV_DIR:-/opt/knav}"
 KNAV_PORT="${KNAV_PORT:-3000}"
 KNAV_DB="${KNAV_DB:-mysql}"                      # mysql | mariadb
 KNAV_REF="${KNAV_REF:-main}"                      # 下载 compose 文件的分支或 tag
-KNAV_CN="${KNAV_CN:-auto}"                        # auto=探到 Docker Hub 不通才走国内源；1=强制国内源；0=只用国外
-KNAV_RAW_BASE="${KNAV_RAW_BASE:-}"                # 手动指定 compose 文件的下载地址；留空按 GitHub→Gitee 依次试
+KNAV_CN="${KNAV_CN:-auto}"                        # auto=探到 Docker Hub 不通才走国内源；1=强制国内源；0=镜像只用国外
+KNAV_RAW_BASE="${KNAV_RAW_BASE:-}"                # 手动指定 compose 文件的下载地址；留空按探测结果排 GitHub / Gitee 先后
 KNAV_IMAGE="${KNAV_IMAGE:-}"                      # 应用镜像；留空时按 KNAV_CN 选 Hub 或阿里云 ACR
 KNAV_DB_IMAGE="${KNAV_DB_IMAGE:-}"                # 数据库镜像；留空时按 KNAV_CN 选官方或国内镜像
 KNAV_ACR_IMAGE="${KNAV_ACR_IMAGE:-registry.cn-hangzhou.aliyuncs.com/kuwinet/knav}"   # 国内应用镜像；命名空间要和阿里云上建的一致
@@ -106,22 +106,25 @@ fi
 mkdir -p "$KNAV_DIR"
 cd "$KNAV_DIR"
 
-# compose 文件按「GitHub → Gitee」依次试，每个源 20 秒上限：raw.githubusercontent.com 在国内经常
-# 整段超时，而 Gitee 的镜像仓库几分钟就同步一次。Gitee 的 raw 会 302 到带时效签名的地址，
-# 必须 -L 才拿得到正文（不带 -L 落盘的是 388 字节的跳转页）
+# 两个源依次试，每个源 20 秒上限（--retry 1 封顶两次；下一个源是另一台机器，在同一台上死磕没意义）。
+# 上面探到 Docker Hub 不通就把 Gitee 排前面，省掉两个文件各等一轮 GitHub 超时——那半分钟正是
+# 「卡在下载 compose.yaml」的观感。Gitee 的 raw 会 302 到带时效签名的地址，必须 -L 才拿得到正文
+# （不带 -L 落盘的是 388 字节的跳转页）
+GH_RAW="https://raw.githubusercontent.com/KuwiNet/knav/$KNAV_REF"
+GN_RAW="https://gitee.com/kuwinet/knav/raw/$KNAV_REF"
 RAW_BASES=()
 if [ -n "$KNAV_RAW_BASE" ]; then
   RAW_BASES=("$KNAV_RAW_BASE")
+elif [ "$USE_CN" = 1 ]; then
+  RAW_BASES=("$GN_RAW" "$GH_RAW")
 else
-  RAW_BASES=(
-    "https://raw.githubusercontent.com/KuwiNet/knav/$KNAV_REF"
-    "https://gitee.com/kuwinet/knav/raw/$KNAV_REF")
+  RAW_BASES=("$GH_RAW" "$GN_RAW")
 fi
 for f in compose.yaml "$DB_FILE"; do
   got=0
   for base in "${RAW_BASES[@]}"; do
     log "下载 $f（← $(printf '%s' "$base" | cut -d/ -f3)）"
-    if curl -fsSL --retry 2 -m 20 -o "$f.part" "$base/$f"; then got=1; break; fi
+    if curl -fsSL --retry 1 -m 20 -o "$f.part" "$base/$f"; then got=1; break; fi
     rm -f "$f.part"
   done
   [ "$got" = 1 ] || die "下载 $f 失败，两个源都没通：${RAW_BASES[*]}。可以先手动把仓库根目录的 $f 放到 $KNAV_DIR 再重跑，或用 KNAV_RAW_BASE 指定一个能访问的镜像地址"
@@ -158,6 +161,11 @@ PUB_IP="$(public_ip || true)"
 
 # 沿用旧配置时这些值要从 .env 里读回来，否则结尾打印的是空
 env_get() { sed -n "s/^$1=//p" "$ENV_FILE" | head -1; }
+# 写回 .env：没有这一行就追加（老版本的 .env 里没有 KNAV_IMAGE / KNAV_DB_IMAGE 两行）
+env_set() {
+  if grep -q "^$1=" "$ENV_FILE"; then sed -i "s|^$1=.*|$1=$2|" "$ENV_FILE"
+  else printf '%s=%s\n' "$1" "$2" >>"$ENV_FILE"; fi
+}
 if [ -f "$ENV_FILE" ] && [ "$KNAV_FORCE" != "1" ]; then
   log "沿用已有 $ENV_FILE（要重新生成：KNAV_FORCE=1）"
   ADMIN_PASSWORD="$(env_get ADMIN_PASSWORD)"
@@ -232,14 +240,41 @@ COMPOSE="docker compose -f $KNAV_DIR/compose.yaml -f $KNAV_DIR/$DB_FILE"
 if docker image inspect "$KNAV_IMAGE" >/dev/null 2>&1; then
   log "本机已有 $KNAV_IMAGE，跳过拉取"
 else
-  log "拉取镜像：$KNAV_IMAGE + $KNAV_DB_IMAGE"
-  if ! $COMPOSE pull; then
-    if [ "$USE_CN" = 1 ]; then
-      die "国内源拉取失败（$KNAV_IMAGE + $KNAV_DB_IMAGE）。ACR 上还没这个镜像就等发布工作流推一次再重跑；DaoCloud 不通就自己指一个库镜像，如 KNAV_DB_IMAGE=mysql:8.4；确定这台机能直连 Docker Hub 就 KNAV_CN=0 重跑"
-    else
-      die "拉镜像失败（$KNAV_IMAGE + $KNAV_DB_IMAGE）。Docker Hub 拉不动就 KNAV_CN=1 重跑走国内源；仓库里还没有这个 tag 就改用本地构建的镜像（KNAV_IMAGE=knav:local，见 docs/docker.md 第 3 节）"
-    fi
+  # 按顺序试的镜像组合，格式「应用镜像|库镜像」。第一组是本次判定（或 .env 沿用）的来源；
+  # 判定为国内、且这一组确实是脚本给的 ACR 默认值时，再补一组 Docker Hub 官方名。原因是
+  # 「探测不通」只代表直连 registry-1.docker.io 慢，守护进程里配了加速器的机器按官方名反而能拉下来，
+  # 而 ACR 是这次新加的仓库，很可能还没有对应 tag——没有这组兜底，国内机器就卡在拉镜像无路可走。
+  # 用户显式指定或 .env 沿用旧值时不加，免得拉取失败把站点悄悄换成 latest
+  COMBOS=("$KNAV_IMAGE|$KNAV_DB_IMAGE")
+  if [ "$USE_CN" = 1 ] && [ "$USER_SET_IMAGE" = 0 ] && [ "$KNAV_IMAGE" = "$KNAV_ACR_IMAGE:$IMG_TAG" ]; then
+    FB_IMG="kuwinet/knav:$IMG_TAG"
+    FB_DB="$KNAV_DB_IMAGE"
+    # 数据库镜像只有确实是 DaoCloud 前缀时才换回官方名，用户自己指的仓库不碰
+    if [ "$KNAV_DB_IMAGE" = "$DB_IMAGE_CN" ]; then FB_DB="$DB_IMAGE_UPSTREAM"; fi
+    COMBOS+=("$FB_IMG|$FB_DB")
   fi
+  pulled=0
+  for combo in "${COMBOS[@]}"; do
+    img="${combo%%|*}"
+    dbimg="${combo##*|}"
+    if [ "$img" = "$KNAV_IMAGE" ] && [ "$dbimg" = "$KNAV_DB_IMAGE" ]; then
+      log "拉取镜像：$img + $dbimg"
+    else
+      log "上一组没拉到，换：$img + $dbimg"
+    fi
+    if KNAV_IMAGE="$img" KNAV_DB_IMAGE="$dbimg" $COMPOSE pull; then
+      pulled=1
+      if [ "$img" != "$KNAV_IMAGE" ] || [ "$dbimg" != "$KNAV_DB_IMAGE" ]; then
+        KNAV_IMAGE="$img"
+        KNAV_DB_IMAGE="$dbimg"
+        env_set KNAV_IMAGE "$KNAV_IMAGE"
+        env_set KNAV_DB_IMAGE "$KNAV_DB_IMAGE"
+        log "本次改用 $KNAV_IMAGE + $KNAV_DB_IMAGE，已写回 $ENV_FILE（下次 up -d 不会又换回去）"
+      fi
+      break
+    fi
+  done
+  [ "$pulled" = 1 ] || die "拉镜像失败，试过的组合：${COMBOS[*]//|/ + }。ACR 上还没这个 tag 就等发布工作流推一次再重跑（配 ACR 见 docs/docker.md 2.6）；这台机能直连 Docker Hub 或配了加速器就 KNAV_CN=0 重跑；都不行改用本地构建 KNAV_IMAGE=knav:local，见第 3 节"
 fi
 
 log "启动服务（首次建库会跑迁移，约 1 分钟）"
