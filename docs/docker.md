@@ -80,7 +80,8 @@ curl -fsSL https://raw.githubusercontent.com/KuwiNet/knav/main/docker/install.sh
 公网地址是问三个外部服务拿的（`ifconfig.me` / `api.ipify.org` / `ipinfo.io`，各 3 秒上限），
 返回私网段一律不算公网，所以 NAT 后面的机器只会显示内网那一行；机器没有外网出口时探测会在十几秒内放弃，
 站点地址退回 `127.0.0.1`。注意探测到公网地址 ≠ 外面真能进来，还得路由器做端口映射或云安全组放行；
-有域名的话用 `KNAV_SITE_URL=https://nav.example.com` 覆盖，比 IP 更稳（证书、SEO、换 IP 都不用再改）。
+有域名的话用 `KNAV_SITE_URL=https://nav.example.com` 覆盖，比 IP 更稳（证书、SEO、换 IP 都不用再改），
+装完再按第 7 节配反代与证书。
 
 还没推仓库的机器可以 `KNAV_IMAGE=knav:local` 配合第 3 节本地构建。
 
@@ -152,7 +153,7 @@ docker compose -f compose.yaml -f compose.host.yaml up -d --build
 `.env` 里保持 `DB_HOST=127.0.0.1`，并把 `PORT` 填成想对外监听的端口（host 网络下它就是宿主端口，
 `ports:` 那行不再生效，compose 打一行 `Published ports are discarded` 警告属正常）。
 之前用 `docker run` 起过站的，加 `KNAV_UPLOADS_VOLUME=<原卷名>` 才能接着用已有素材，否则会换到一个新空卷。
-另外 host 网络的入站要过防火墙，`ufw` 为 active 的机器见第 9 节最后一条。
+另外 host 网络的入站要过防火墙，`ufw` 为 active 的机器见第 9 节「host 网络的站点局域网打不开」。
 
 ### 2.5 验证
 
@@ -341,24 +342,96 @@ docker compose cp /opt/knav/public/uploads/. knav:/app/public/uploads
 
 ---
 
-## 7. 反向代理与 HTTPS
+## 7. 绑定域名与 HTTPS
 
-镜像只对外提供 3000 端口的 HTTP，TLS 交给前置服务（1Panel 的 OpenResty、Nginx、Caddy 均可）。
-`SITE_URL` 与后台「站点地址」都要写公网 `https://` 域名，否则邮件里的链接、第三方登录回调地址
-会指向容器内地址。
+镜像本身只对外提供 3000 端口的 HTTP，域名、证书、TLS 都由前置服务负责（1Panel 的 OpenResty、
+Nginx、Caddy 均可）。7.1–7.5 按顺序做，缺一步的症状都标在括号里；7.6 是收紧端口的可选项。
+最容易被漏掉的是 7.3——反代通了但站点还不知道自己换了地址。
 
-Nginx 最小片段：
+### 7.1 解析与放行
+
+- 域名加 A 记录指向服务器公网 IP，`dig +short nav.example.com` 能回这个 IP 才算生效（回不到就
+  先等 TTL，别急着排反代）。
+- 云安全组放行 80/443。3000 不需要对外开，反代是从 `127.0.0.1` 转的。
+- **国内机器的额外一道**：域名没备案时，云厂商会拦 80/443 上的 HTTP 请求（表现是「反代配好了、
+  证书也签下来了，浏览器仍是运营商提示页」）。先备案，或临时用非标端口验证完再切。
+- 宿主 `ufw` 也要放 80/443。注意 `-p` 端口映射会绕过 ufw，而 `--network host` 的入站要单独放行
+  （见第 9 节）。
+
+### 7.2 反向代理与证书
+
+1Panel：网站 → 新建网站 → 反向代理，代理地址 `http://127.0.0.1:3000`，再在该网站申请 Let's Encrypt
+证书并开「强制 HTTPS」。手写 Nginx 就是这份（源码部署那份在 README 第 9 节，两处值要一致）：
 
 ```nginx
-location / {
-  proxy_pass http://127.0.0.1:3000;
-  proxy_set_header Host $host;
-  proxy_set_header X-Forwarded-Proto $scheme;
-  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-  # 「数据迁移」要上传整份 SQL 备份，默认 1m 会拦下请求
-  client_max_body_size 64m;
+server {
+    listen 443 ssl http2;
+    server_name nav.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/nav.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/nav.example.com/privkey.pem;
+
+    # 素材单文件 8MB、「数据迁移」的备份最大 64MB，留出余量；
+    # 默认 1m 会在上传备份那一步直接 413
+    client_max_body_size 80m;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_read_timeout 300s;
+    }
 }
 ```
+
+`X-Forwarded-Proto` 必须透传，否则登录 Cookie 的安全属性和邮件里的链接协议会算错。
+80 端口另配一个 server 只做 301 到 https。证书用 `sudo certbot --nginx -d nav.example.com` 签最简单。
+
+### 7.3 告诉 knav 它换地址了
+
+**两处，优先级是后台 > 环境变量**，只改一处迟早对不上：
+
+1. 后台「站点设置 → 基础信息」的**站点地址**填 `https://nav.example.com`，保存即生效，不用重启容器。
+2. `.env` 里的 `SITE_URL` 也改成同一个值，免得以后重装或换机器又退回 IP：
+
+```bash
+sudo sed -i 's|^SITE_URL=.*|SITE_URL=https://nav.example.com|' /opt/knav/.env && cd /opt/knav && sudo docker compose -f compose.yaml -f compose.mysql.yaml up -d
+```
+
+两条注意：compose 只在 `up -d` 时重算环境变量，`docker compose restart` **不会**重新注入；
+站点地址只影响「外发的绝对链接」（邮件里的验证/找回密码链接、第三方登录回调、LOGO 与素材的绝对地址），
+**不影响能不能用局域网 IP 访问**——想拿 IP 直连照样能，只是那些链接会指向站点地址。
+首次安装时也可以用 `KNAV_SITE_URL=https://nav.example.com` 直接写进 `.env`（见 2.1）。
+
+### 7.4 第三方登录回调要跟着换
+
+GitHub / Google / Gitee / Telegram 那边登记的回调地址是后台「登录方式」按**站点地址**生成的，
+换域名后必须回各自平台把 `https://旧地址/api/auth/callback/...` 改成新域名，否则点登录会报
+`redirect_uri_mismatch`。新域名第一次配 OAuth 时，直接复制后台那一行给用户填，别手拼。
+
+### 7.5 验证
+
+```bash
+curl -sI -m 10 https://nav.example.com | head -1; curl -s -m 10 https://nav.example.com/api/health
+```
+
+再取首页里 `/_next/static/css/*.css` 的完整地址请求一次。真机上踩过「首页全 200 但样式全无」，
+只看状态码查不出来（第 10 节那条）。最后发一封找回密码邮件，确认链接是新域名。
+
+### 7.6 可选：把 3000 只留回环
+
+`compose.yaml` 的端口是 `${PORT:-3000}:3000`，默认绑所有网卡，反代做好以后可以收紧成只从本机进：
+
+```yaml
+    ports:
+      - "127.0.0.1:3000:3000"
+```
+
+改完 `docker compose up -d` 重建。之后 `http://IP:3000` 从外面不通，只有域名那条路能进。
 
 ---
 
