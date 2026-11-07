@@ -107,7 +107,8 @@ jobs:
       # Secret 不能直接写在 if 里比较（secrets 上下文在部分场景取不到值），先落到 job 级 env
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-      SUMMARY: knav 导航站：Next.js + MySQL 的网址收藏 / 文章 / 软件下载系统，自带账号体系、投稿审核与完整后台
+      # 一句话简介：Hub 按 UTF-8 字节算，上限 100（中文一字 3 字节，超了直接 400）
+      SUMMARY: knav 导航站：网址收藏 / 文章 / 软件下载，Next.js + MySQL，含账号与后台
     steps:
       - uses: actions/checkout@v4
 
@@ -138,6 +139,12 @@ jobs:
           fi
 
           # JSON 交给 python 转义：正文里有反引号、引号和多行，手拼字符串迟早踩坑
+          # 简介按 UTF-8 字节算，超过 100 会被 Hub 拒成 400，这里先自己挡一道
+          bytes="$(printf %s "$SUMMARY" | wc -c)"
+          if [ "$bytes" -gt 100 ]; then
+            echo "SUMMARY 超长：$bytes 字节，Hub 简介上限 100（中文按 3 字节计）" >&2
+            exit 1
+          fi
           payload="$(python3 -c 'import json,sys;print(json.dumps({"description":sys.argv[1],"full_description":open(sys.argv[2],encoding="utf-8").read()}))' \
             "$SUMMARY" docker/hub-overview.md)"
 
