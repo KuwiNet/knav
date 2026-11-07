@@ -179,9 +179,12 @@ jobs:
         env:
           ACR_OUTCOME: ${{ steps.acr.outcome }}
         run: |
-          imgs="$(printf '%s\n%s' "$HUB_IMAGE" "$GHCR_IMAGE")"
+          # docker 引用名不允许大写，而 GHCR_IMAGE 用的是 github.repository（KuwiNet/knav）。
+          # 以前交给 build-push-action 会自动小写化，现在 imagetools 是命令行直接拼，必须自己归一，
+          # 否则报 "invalid reference format: repository name (KuwiNet/knav) must be lowercase"（Run 42367319815）
+          imgs="$(printf '%s\n%s' "$HUB_IMAGE" "$GHCR_IMAGE" | tr 'A-Z' 'a-z')"
           if [ "${ACR_OUTCOME:-none}" = success ]; then
-            imgs="$(printf '%s\n%s' "$imgs" "$ACR_IMAGE")"
+            imgs="$(printf '%s\n%s' "$imgs" "$ACR_IMAGE" | tr 'A-Z' 'a-z')"
           elif [ -z "${ACR_USERNAME:-}" ] || [ -z "${ACR_IMAGE:-}" ]; then
             echo "::notice::未配置 ACR 凭据或仓库变量 ACR_IMAGE，本次不推阿里云 ACR（国内机器仍走 Docker Hub 加速）"
           else
