@@ -153,7 +153,8 @@ curl -s -o /dev/null -w "$CSS -> %{http_code}\n" "http://127.0.0.1:3000$CSS"   #
 `GITHUB_TOKEN`，不需要额外配置。
 
 改这个文件需要令牌带 `workflow` scope（只有 `repo` 会被 GitHub 拒：`git push` 被拒、REST 写返回 404），
-所以在网页上直接编辑最省事。仓库里不留第二份副本，避免两处不一致。
+所以用带 `workflow` 的经典 PAT 走 Contents API 写（`gh api -X PUT repos/.../contents/.github/workflows/...`），
+或在网页上直接编辑。仓库里不留第二份副本，避免两处不一致。
 
 ```bash
 curl -sS https://raw.githubusercontent.com/KuwiNet/knav/main/.github/workflows/docker-publish.yml   # 看当前内容
@@ -169,12 +170,17 @@ Hub 的概述页不会自动读 README：个人账号的仓库没有这层联动
 `同步 Docker Hub 概述` job 每次都会拿它 PATCH 一次仓库对象，改完文案跟着下一次发布自动生效。
 
 ```bash
-gh workflow run "Publish container image" --repo KuwiNet/knav --ref main   # 只想刷新概述，也跑这个
+# 只刷新概述，不跑十几分钟的多架构构建
+gh workflow run docker-publish.yml --repo KuwiNet/knav --ref main -f only_description=true
 ```
 
-PATCH 前先用 `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` 换一个 Hub API 的 JWT，scope 必须带 `push`
-（只有 `pull` 的令牌读得到改不动），所以不需要为它另配凭据；未配这两个 Secret 时该 job 直接跳过。
-正文里的图片要写绝对地址（Hub 会代理一份到自己那边），仓库相对路径在概述里显示不出来。
+PATCH 前先 `POST https://hub.docker.com/v2/users/login/`（用户名 + PAT 当密码）拿**账号级 JWT**。
+`auth.docker.io/token` 那种 JWT 只有 registry 作用域，推镜像够用，拿它改仓库元数据会 401；
+未配 `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` 时该 job 直接跳过，不为它另配凭据。
+
+两个坑：`description`（一句话简介）Hub 按 **UTF-8 字节**限长 100，中文一字 3 字节，超了返回
+400 `Exceeded max number of bytes 100`，脚本里已加自检；正文图片写 `raw.githubusercontent.com`
+的绝对地址即可，实测 Hub 不代理也不拦截，页面直接从 GitHub 取（`naturalWidth` 1440）。
 
 
 ---
@@ -494,6 +500,16 @@ compose 只在 `up -d` 时重算环境变量，改完执行 `docker compose up -
 - 上一次手动触发只出 `latest` + `main` 不是 bug：`type=semver` 只解析 `refs/tags/v*`，而
   `workflow_dispatch` 的 `github.ref_type` 恒为 `branch`（就算把 ref 选成某个 tag 也一样），
   所以**版本号镜像标签只能靠推 `v*` tag 的那次 run 拿到**；手动触发用来补 `latest`
+
+**Docker Hub 概述**（2026-11-07，Run 42335969311，手动触发 `only_description=true`）：
+
+- 前两次分别败在鉴权和限长：拿 `auth.docker.io` 的 JWT 去 PATCH 网站 API 回 401（那串只有 registry
+  作用域，推镜像够用）；换 `POST /v2/users/login/` 的账号 JWT 后接口通了，又被 `description`
+  129 字节 > 上限 100 拒成 400
+- 现在匿名 `GET /v2/repositories/kuwinet/knav/` 能读到 92 字节的 `description` 和 4886 字节的
+  `full_description`（正文来自 `docker/hub-overview.md`）；浏览器里「No overview available」消失，
+  3 张截图直接从 `raw.githubusercontent.com` 取到，`naturalWidth` 都是 1440
+- `only_description=true` 时 `build` job 被 `if:` 整个跳过（run 里显示 0s），改文案不用陪跑多架构构建
 
 **一键安装脚本**（开发机无 Docker，用桩程序 `docker`/`curl`/`ip`/`ss`/`openssl` 跑完整流程验证）：
 
