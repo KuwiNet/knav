@@ -4,6 +4,7 @@ import { useActionState, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { reviewAction } from "@/lib/actions/admin-actions";
 import { renderMarkdownSync, renderRichText } from "@/lib/markdown";
+import CardIcon from "@/components/card-icon";
 import type { FormState } from "@/lib/actions/types";
 import type { Submission } from "@/lib/submissions";
 
@@ -55,14 +56,26 @@ function Item({
   return (
     <div className="card card-pad" style={{ marginBottom: 14 }}>
       <div className="row" style={{ justifyContent: "space-between", marginBottom: 8 }}>
-        <div>
-          <strong style={{ fontSize: 16 }}>{sub.title}</strong>
-          <span className="badge" style={{ marginLeft: 8 }}>
-            {sub.type === "site" ? "网址" : "文章"}
-          </span>
-          <span className="badge badge-accent" style={{ marginLeft: 6 }}>
-            {sub.categoryName || "未分类"}
-          </span>
+        <div className="row" style={{ gap: 8, alignItems: "flex-start", minWidth: 0 }}>
+          {/* 投稿表单里「图标地址」只对网址型开放，文章型没有封面可看 */}
+          {sub.type === "site" ? (
+            <span className="cat-icon-cell">
+              <CardIcon
+                src={sub.cover}
+                letter={(sub.title || "?").trim().charAt(0).toUpperCase()}
+                alt={`${sub.title} 图标`}
+              />
+            </span>
+          ) : null}
+          <div style={{ minWidth: 0 }}>
+            <strong style={{ fontSize: 16 }}>{sub.title}</strong>
+            <span className="badge" style={{ marginLeft: 8 }}>
+              {sub.type === "site" ? "网址" : "文章"}
+            </span>
+            <span className="badge badge-accent" style={{ marginLeft: 6 }}>
+              {sub.categoryName || "未分类"}
+            </span>
+          </div>
         </div>
         <span className="text-muted text-sm nowrap">
           {sub.username} · {String(sub.createdAt).slice(0, 16)}

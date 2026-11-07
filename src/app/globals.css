@@ -3155,10 +3155,20 @@ select {
   place-items: center;
   width: 30px;
   height: 30px;
+  /* 卡片头部的标题很长，没有这条时 30px 的格子会被 flex 压成竖条 */
+  flex-shrink: 0;
   border-radius: 7px;
   background: var(--surface-2);
   border: 1px solid var(--border);
   color: var(--accent);
+}
+
+/* 格子里放的是投稿/抓取来的外链图，尺寸不可控（og:image 动辄 1200px），统一裁成方图 */
+.cat-icon-cell img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 6px;
 }
 
 /* 分类管理表格：二级分类挂在顶级分类下面，点箭头才展开 */
