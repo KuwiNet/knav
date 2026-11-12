@@ -85,7 +85,7 @@ export default async function ArticleDetailPage({
 
         {/* 目录单独一张卡；标题不足 3 个的短文不值得占这块位置 */}
         {headings.length >= 3 ? (
-          <div className="aside-card">
+          <div className="aside-card toc-card">
             <h2 className="aside-title">目录</h2>
             <ul className="toc-list">
               {headings.map((h) => (

@@ -1517,6 +1517,23 @@ select {
   color: var(--text-3);
 }
 
+/* 目录卡钉在 sticky 顶栏下面，长文滚到哪儿都能跳。
+   侧栏本来 align-items:start，盒子只有内容那么高，sticky 没有滚动余地，
+   所以单独把 aside 拉满整行；条目多到超过视口时卡片内部自己滚。
+   900px 以下侧栏掉到正文下面，钉住反而碍事，只在桌面端生效。 */
+@media (min-width: 901px) {
+  .layout-with-aside aside {
+    align-self: stretch;
+  }
+
+  .toc-card {
+    position: sticky;
+    top: calc(var(--header-h) + 16px);
+    max-height: calc(100vh - var(--header-h) - 32px);
+    overflow: auto;
+  }
+}
+
 /* ---------------------------------------------------------------- 认证页 */
 .auth-wrap {
   max-width: 400px;
