@@ -67,6 +67,90 @@ export function renderMarkdownSync(md: string): string {
   return sanitizeHtml(raw);
 }
 
+/** 目录条目：正文里带锚点的标题 */
+export type HeadingAnchor = { level: number; text: string; id: string };
+
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  nbsp: " ",
+  mdash: "—",
+  ndash: "–",
+  hellip: "…",
+  middot: "·",
+};
+
+function decodeEntities(s: string): string {
+  return s.replace(/&(#x?[0-9a-f]+|[a-z0-9]+);/gi, (match, body: string) => {
+    if (body[0] !== "#") return NAMED_ENTITIES[body.toLowerCase()] ?? match;
+    const code =
+      body[1] === "x" || body[1] === "X"
+        ? parseInt(body.slice(2), 16)
+        : parseInt(body.slice(1), 10);
+    return Number.isFinite(code) ? String.fromCodePoint(code) : match;
+  });
+}
+
+/** 标题里常夹着 <code>、<strong>、图片，目录只留一行纯文本 */
+function headingText(inner: string): string {
+  return decodeEntities(inner.replace(/<[^>]*>/g, " ")).replace(/\s+/g, " ").trim();
+}
+
+/** 中文标题直接当锚点用，比 h-1 这种对搜索和用户都友好 */
+function headingSlug(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^\p{Letter}\p{Number}]+/gu, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
+}
+
+/**
+ * 给正文 h2/h3 补上 id，并顺手抽出目录。
+ *
+ * marked 生成的标题没有锚点，链接跳不过去；老站 HTML 里已有的 id 原样沿用。
+ * 代码块里的 <h2> 在渲染时已被转义成 &lt;h2&gt;，不会被这条正则命中。
+ */
+export function attachHeadingAnchors(html: string): {
+  html: string;
+  headings: HeadingAnchor[];
+} {
+  const headings: HeadingAnchor[] = [];
+  if (!html) return { html: "", headings };
+  const used = new Set<string>();
+
+  const uniqueId = (base: string): string => {
+    const root = base || "sec";
+    let id = root;
+    for (let n = 2; used.has(id); n++) id = `${root}-${n}`;
+    used.add(id);
+    return id;
+  };
+
+  const body = html.replace(
+    /<(h[23])\b([^>]*)>([\s\S]*?)<\/\1>/gi,
+    (match, tag: string, attrs: string, inner: string) => {
+      const text = headingText(inner);
+      if (!text) return match;
+      const existing = attrs.match(/\bid\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+      const id = uniqueId(
+        existing
+          ? headingSlug(decodeEntities(existing[1] ?? existing[2] ?? existing[3] ?? ""))
+          : headingSlug(text)
+      );
+      headings.push({ level: Number(tag.slice(1)), text, id });
+      return existing
+        ? `<${tag}${attrs.replace(/\bid\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/i, `id="${id}"`)}>${inner}</${tag}>`
+        : `<${tag}${attrs} id="${id}">${inner}</${tag}>`;
+    }
+  );
+
+  return { html: body, headings };
+}
+
 /** 提取 Markdown 摘要 */
 export function excerptFromMarkdown(md: string, length = 120): string {
   const text = (md || "")

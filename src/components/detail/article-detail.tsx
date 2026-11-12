@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getContentItem, parseContentId } from "@/lib/content";
 import { renderMarkdown } from "@/lib/submissions";
+import { attachHeadingAnchors } from "@/lib/markdown";
 import { codeThemeClasses } from "@/lib/code-theme";
 import CodeCopy from "./code-copy";
 
@@ -17,10 +18,11 @@ export default async function ArticleDetailPage({
   const item = await getContentItem(id);
   if (!item || item.type !== "article") notFound();
 
-  const [html, codeClasses] = await Promise.all([
+  const [rendered, codeClasses] = await Promise.all([
     renderMarkdown(item.contentMd || "", `${item.title} 配图`),
     codeThemeClasses(),
   ]);
+  const { html, headings } = attachHeadingAnchors(rendered);
 
   return (
     <div className="layout-with-aside">
@@ -80,6 +82,26 @@ export default async function ArticleDetailPage({
             </>
           ) : null}
         </div>
+
+        {/* 目录单独一张卡；标题不足 3 个的短文不值得占这块位置 */}
+        {headings.length >= 3 ? (
+          <div className="aside-card">
+            <h2 className="aside-title">目录</h2>
+            <ul className="toc-list">
+              {headings.map((h) => (
+                <li key={h.id}>
+                  <a
+                    className={`toc-link${h.level >= 3 ? " toc-sub" : ""}`}
+                    href={`#${h.id}`}
+                    title={h.text}
+                  >
+                    {h.text}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
       </aside>
 
       <CodeCopy />
