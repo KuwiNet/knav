@@ -14,9 +14,13 @@ import {
   imageMimeOf,
   saveBufferToLocal,
   scanUploadsToMedia,
+  fileKindFromBytes,
+  saveBufferedFile,
+  FILE_KIND_HINT,
   MAX_IMAGE_BYTES,
+  MAX_FILE_BYTES,
 } from "@/lib/media";
-import type { AssetUploadState, FormState } from "./types";
+import type { AssetUploadState, FileUploadState, FormState } from "./types";
 
 /**
  * 素材库相关动作。
@@ -38,23 +42,28 @@ type SavedUpload = {
   height?: number;
 };
 
-/** 校验并保存上传的图片，素材库与内容编辑共用 */
-async function saveUploadedImage(
-  fd: FormData
+/**
+ * 判断表单项是不是上传的文件。
+ * 不用 `instanceof File`：Node 18 没有全局 File 构造函数，会直接抛 ReferenceError，
+ * 而这里的类型标注编译后会被擦除，不产生运行时引用。
+ */
+function isFileLike(entry: FormDataEntryValue | null): entry is File {
+  return !!entry && typeof entry === "object" && "arrayBuffer" in entry;
+}
+
+const nameOf = (entry: FormDataEntryValue | null) =>
+  isFileLike(entry) ? entry.name : "所选文件";
+
+/** 校验并保存单个上传图片，素材库与内容编辑共用 */
+async function saveImageEntry(
+  entry: FormDataEntryValue | null
 ): Promise<{ ok: true; file: SavedUpload } | { ok: false; error: string }> {
-  const file = fd.get("file");
-  // 不使用 instanceof File：Node 18 没有全局 File 构造函数，会直接抛 ReferenceError
-  if (!file || typeof file !== "object" || !("arrayBuffer" in file)) {
+  if (!isFileLike(entry)) {
     return { ok: false, error: "请选择要上传的文件" };
   }
-  const f = file as unknown as {
-    size: number;
-    type: string;
-    name: string;
-    arrayBuffer(): Promise<ArrayBuffer>;
-  };
+  const f = entry;
   if (!f.size) {
-    return { ok: false, error: "请选择要上传的文件" };
+    return { ok: false, error: "文件内容为空" };
   }
   if (f.size > MAX_IMAGE_BYTES) {
     return {
@@ -94,30 +103,51 @@ async function saveUploadedImage(
   };
 }
 
-/** 上传本地文件到 public/uploads */
+/** 上传本地文件到 public/uploads（可一次多选） */
 export async function uploadMediaAction(
   _prev: FormState,
   fd: FormData
 ): Promise<FormState> {
   await requireAdmin();
-  const r = await saveUploadedImage(fd);
-  if (!r.ok) return { error: r.error };
-  const { file } = r;
+  const picked = fd.getAll("file");
+  if (!picked.length) return { error: "请选择要上传的文件" };
 
-  await recordMedia({
-    filename: file.filename,
-    path: file.relPath,
-    url: file.relPath,
-    mime: file.mime,
-    size: file.buf.length,
-    width: file.width ?? 0,
-    height: file.height ?? 0,
-    alt: "",
-  });
+  const saved: SavedUpload[] = [];
+  const failed: string[] = [];
+  for (const entry of picked) {
+    const r = await saveImageEntry(entry);
+    if (!r.ok) {
+      failed.push(
+        picked.length > 1 ? `${nameOf(entry)}：${r.error}` : r.error
+      );
+      continue;
+    }
+    const { file } = r;
+    await recordMedia({
+      filename: file.filename,
+      path: file.relPath,
+      url: file.relPath,
+      mime: file.mime,
+      size: file.buf.length,
+      width: file.width ?? 0,
+      height: file.height ?? 0,
+      alt: "",
+    });
+    saved.push(file);
+  }
 
-  await logAction("media.upload", file.filename, { path: file.relPath });
+  if (!saved.length) return { error: failed.join("；") };
+
+  await logAction(
+    "media.upload",
+    saved.map((s) => s.filename).join(", "),
+    { paths: saved.map((s) => s.relPath), failed: failed.length }
+  );
   revalidatePath("/admin/media");
-  return { success: `上传成功：${file.relPath}` };
+
+  const tail = failed.length ? `；${failed.length} 个失败：${failed.join("；")}` : "";
+  if (saved.length === 1) return { success: `上传成功：${saved[0].relPath}${tail}` };
+  return { success: `已上传 ${saved.length} 个素材${tail}` };
 }
 
 /** 内容编辑页直接上传图标 / 封面，返回站内地址并同步登记素材库 */
@@ -125,7 +155,7 @@ export async function uploadContentAssetAction(
   fd: FormData
 ): Promise<AssetUploadState> {
   await requireAdmin();
-  const r = await saveUploadedImage(fd);
+  const r = await saveImageEntry(fd.get("file"));
   if (!r.ok) return { ok: false, error: r.error };
   const { file } = r;
 
@@ -143,6 +173,62 @@ export async function uploadContentAssetAction(
   await logAction("content.asset.upload", file.filename, { path: file.relPath });
   revalidatePath("/admin/media");
   return { ok: true, url: file.relPath };
+}
+
+/**
+ * 编辑器「添加文件」上传附件。
+ *
+ * 与图片通道分开：附件不是拿来内嵌展示的，体积上限放宽到 20MB，
+ * 类型只按文件头魔数收白名单（文档 / 压缩包 / 音视频 / 图片），
+ * 落盘后同样登记素材库，素材库删素材时文件一并清掉。
+ */
+export async function uploadContentFileAction(
+  fd: FormData
+): Promise<FileUploadState> {
+  await requireAdmin();
+  const file = fd.get("file");
+  if (!isFileLike(file)) return { ok: false, error: "请选择要上传的文件" };
+  const f = file;
+  if (!f.size) return { ok: false, error: "请选择要上传的文件" };
+  if (f.size > MAX_FILE_BYTES) {
+    return {
+      ok: false,
+      error: `文件过大（${Math.round(f.size / 1024 / 1024)}MB），上限 ${Math.round(MAX_FILE_BYTES / 1024 / 1024)}MB`,
+    };
+  }
+
+  const buf = Buffer.from(await f.arrayBuffer());
+  const kind = fileKindFromBytes(buf);
+  if (!kind.ext) {
+    return { ok: false, error: `无法确认文件类型（不是按扩展名判断的）。支持：${FILE_KIND_HINT}` };
+  }
+
+  const saved = await saveBufferedFile(buf, kind.ext, f.name);
+  if (!saved.ok) return { ok: false, error: saved.error };
+
+  await recordMedia({
+    filename: f.name,
+    path: saved.relPath,
+    url: saved.relPath,
+    mime: kind.mime,
+    size: saved.size,
+    width: 0,
+    height: 0,
+    alt: "",
+  });
+
+  await logAction("content.file.upload", f.name, {
+    path: saved.relPath,
+    mime: kind.mime,
+  });
+  revalidatePath("/admin/media");
+  return {
+    ok: true,
+    url: saved.relPath,
+    filename: f.name,
+    mime: kind.mime,
+    size: saved.size,
+  };
 }
 
 /** 扫描 public/uploads，登记磁盘上已有但数据库没记录的图片 */
@@ -217,13 +303,18 @@ export async function deleteMediaAction(fd: FormData): Promise<void> {
 
 /** 查询素材（给编辑器弹窗用） */
 export async function searchMediaAction(fd: FormData): Promise<
-  { ok: boolean; items: { id: number; url: string; filename: string }[] }
+  { ok: boolean; items: { id: number; url: string; filename: string; mime: string }[] }
 > {
   await requireAdmin();
   const keyword = String(fd.get("keyword") ?? "").trim();
   const { items } = await listMedia({ keyword, limit: 60 });
   return {
     ok: true,
-    items: items.map((i) => ({ id: i.id, url: i.url, filename: i.filename })),
+    items: items.map((i) => ({
+      id: i.id,
+      url: i.url,
+      filename: i.filename,
+      mime: i.mime ?? "",
+    })),
   };
 }

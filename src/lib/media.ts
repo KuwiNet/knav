@@ -7,9 +7,14 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { query, execute } from "./db";
 import type { MediaItem } from "./media-config";
+import { MAX_FILE_BYTES, MAX_IMAGE_BYTES } from "./media-config";
 
 export type { MediaItem };
-export { formatSize } from "./media-config";
+export {
+  formatSize,
+  MAX_FILE_BYTES,
+  MAX_IMAGE_BYTES,
+} from "./media-config";
 
 /**
  * 素材库 + 外链图片本地化。
@@ -23,8 +28,6 @@ export { formatSize } from "./media-config";
  */
 
 export const UPLOAD_ROOT = "uploads";
-/** 单张图片体积上限（字节） */
-export const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 /** 下载超时 */
 const FETCH_TIMEOUT = 15000;
 
@@ -153,6 +156,120 @@ export function svgExtFromBytes(buf: Buffer): string {
   return "svg";
 }
 
+/* ---------------------------------------------------------------- 附件 */
+
+const MIME_BY_FILE_EXT: Record<string, string> = {
+  pdf: "application/pdf",
+  zip: "application/zip",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  rar: "application/vnd.rar",
+  "7z": "application/x-7z-compressed",
+  gz: "application/gzip",
+  mp3: "audio/mpeg",
+  mp4: "video/mp4",
+  txt: "text/plain; charset=utf-8",
+  md: "text/markdown; charset=utf-8",
+};
+
+/** 附件的后缀 → Content-Type；图片仍归 imageMimeOf 管 */
+export function fileMimeOf(ext: string): string {
+  const e = ext.toLowerCase();
+  return MIME_BY_FILE_EXT[e] ?? imageMimeOf(e);
+}
+
+/** 允许上传的类型说明，报错时原样给用户看 */
+export const FILE_KIND_HINT =
+  "PDF / Word / Excel / PPT / 压缩包（zip、rar、7z、gz）/ MP3 / MP4 / 纯文本（txt、md）/ 图片";
+
+/**
+ * ZIP 容器里带 OOXML 主目录的按对应办公文档收，其余算压缩包。
+ *
+ * docx/xlsx/pptx 本质就是 zip，本地文件头里的路径名是明文，
+ * 直接扫前 64KB 足够判断，不需要解包。
+ */
+function zipKindOf(buf: Buffer): string {
+  const probe = buf.subarray(0, 64 * 1024).toString("latin1");
+  if (probe.includes("word/")) return "docx";
+  if (probe.includes("xl/")) return "xlsx";
+  if (probe.includes("ppt/")) return "pptx";
+  return "zip";
+}
+
+/** 只放行真正的纯文本：二进制、无效 UTF-8、以标签开头的一律拒收 */
+function isPlainText(buf: Buffer): boolean {
+  const head = buf.subarray(0, 8192);
+  if (head.includes(0)) return false;
+  let decoded: string;
+  try {
+    decoded = new TextDecoder("utf-8", { fatal: true }).decode(head);
+  } catch {
+    return false;
+  }
+  let weird = 0;
+  for (const ch of decoded) {
+    const code = ch.codePointAt(0) ?? 0;
+    const allowed =
+      code === 9 || code === 10 || code === 13 || (code >= 32 && code !== 127);
+    if (!allowed) weird++;
+  }
+  if (weird * 100 / Math.max(decoded.length, 1) > 1) return false;
+  // <html>/<script> 这类起手就算解码成功也不能当文本收：同源直开会被解析
+  return !/^\s*<(?:!doctype|html|script|iframe|svg)\b/i.test(decoded);
+}
+
+/**
+ * 从文件头判断附件真实类型，不信任文件名、扩展名和浏览器报的 MIME。
+ *
+ * 附件和素材图落在同一个同源静态目录，只按扩展名收的话，
+ * 一个改名成 .txt 的 HTML 直接打开就是存储型 XSS；这里宁可漏认，不可错认。
+ */
+export function fileKindFromBytes(buf: Buffer): { ext: string; mime: string } {
+  if (buf.length < 4) return { ext: "", mime: "" };
+
+  const image = imageExtFromBytes(buf) || svgExtFromBytes(buf);
+  if (image) return { ext: image, mime: imageMimeOf(image) };
+
+  if (buf.subarray(0, 5).toString("ascii") === "%PDF-")
+    return { ext: "pdf", mime: MIME_BY_FILE_EXT.pdf };
+
+  if (buf[0] === 0x50 && buf[1] === 0x4b && buf[2] === 0x03 && buf[3] === 0x04) {
+    const ext = zipKindOf(buf);
+    return { ext, mime: MIME_BY_FILE_EXT[ext] };
+  }
+
+  if (buf.subarray(0, 6).toString("latin1") === "Rar!\x1a\x07")
+    return { ext: "rar", mime: MIME_BY_FILE_EXT.rar };
+
+  if (buf.subarray(0, 6).toString("hex") === "377dbcaf271c")
+    return { ext: "7z", mime: MIME_BY_FILE_EXT["7z"] };
+
+  if (buf[0] === 0x1f && buf[1] === 0x8b)
+    return { ext: "gz", mime: MIME_BY_FILE_EXT.gz };
+
+  if (buf.subarray(0, 3).toString("ascii") === "ID3")
+    return { ext: "mp3", mime: MIME_BY_FILE_EXT.mp3 };
+
+  // 无 ID3 头的裸 MPEG 帧：_syncword 11111111 111x1011 + version/layer 非保留
+  if (buf[0] === 0xff && (buf[1] & 0xe6) === 0xe2)
+    return { ext: "mp3", mime: MIME_BY_FILE_EXT.mp3 };
+
+  if (buf.subarray(4, 8).toString("ascii") === "ftyp") {
+    const brand = buf.subarray(8, 12).toString("ascii");
+    if (/^(isom|iso2|iso4|iso5|iso6|mp41|mp42|avc1|dash|mmp4)$/.test(brand))
+      return { ext: "mp4", mime: MIME_BY_FILE_EXT.mp4 };
+  }
+
+  if (isPlainText(buf)) {
+    const md = buf.subarray(0, 4096).toString("utf8");
+    const ext = /^\s*#{1,6}\s|^\s*\|.*\|\s*$|\[[^\]]+\]\([^)]+\)/m.test(md) ? "md" : "txt";
+    return { ext, mime: MIME_BY_FILE_EXT[ext] };
+  }
+
+  return { ext: "", mime: "" };
+}
+
 /* ---------------------------------------------------------------- 落盘 */
 
 function publicDir(): string {
@@ -265,12 +382,38 @@ export async function saveBufferToLocal(
     const { relPath, size } = await saveBuffer(buf, safeExt, filenameHint);
     return { ok: true, relPath, size, width: dim.width, height: dim.height };
   } catch (e: any) {
-    const code = e?.code as string | undefined;
-    const reason =
-      code === "EACCES" || code === "EPERM"
-        ? "运行用户对 public/uploads 没有写权限，请把该目录交给运行用户并设为 755"
-        : e?.message ?? String(e);
-    return { ok: false, error: `写入失败：${reason}` };
+    return { ok: false, error: `写入失败：${writeFailReason(e)}` };
+  }
+}
+
+function writeFailReason(e: any): string {
+  const code = e?.code as string | undefined;
+  return code === "EACCES" || code === "EPERM"
+    ? "运行用户对 public/uploads 没有写权限，请把该目录交给运行用户并设为 755"
+    : e?.message ?? String(e);
+}
+
+/**
+ * 附件落盘：与图片同一目录、同一命名规则，只是体积上限换成附件的，
+ * 也不去解析图片尺寸（压缩包/音视频没有尺寸可言）。
+ */
+export async function saveBufferedFile(
+  buf: Buffer,
+  ext: string,
+  filenameHint: string
+): Promise<{ ok: true; relPath: string; size: number } | { ok: false; error: string }> {
+  if (buf.length === 0) return { ok: false, error: "文件内容为空" };
+  if (buf.length > MAX_FILE_BYTES) {
+    return {
+      ok: false,
+      error: `文件过大（${Math.round(buf.length / 1024 / 1024)}MB），上限 ${Math.round(MAX_FILE_BYTES / 1024 / 1024)}MB`,
+    };
+  }
+  try {
+    const { relPath, size } = await saveBuffer(buf, ext, filenameHint);
+    return { ok: true, relPath, size };
+  } catch (e: any) {
+    return { ok: false, error: `写入失败：${writeFailReason(e)}` };
   }
 }
 

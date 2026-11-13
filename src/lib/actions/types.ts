@@ -20,3 +20,8 @@ export interface AvatarState extends FormState {
 export type AssetUploadState =
   | { ok: true; url: string }
   | { ok: false; error: string };
+
+/** 编辑器「添加文件」上传附件的结果；文件名要回给前端写进正文链接 */
+export type FileUploadState =
+  | { ok: true; url: string; filename: string; mime: string; size: number }
+  | { ok: false; error: string };

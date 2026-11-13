@@ -24,7 +24,16 @@ const MIME: Record<string, string> = {
   svg: "image/svg+xml",
   pdf: "application/pdf",
   zip: "application/zip",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  rar: "application/vnd.rar",
+  "7z": "application/x-7z-compressed",
+  gz: "application/gzip",
+  mp3: "audio/mpeg",
+  mp4: "video/mp4",
   txt: "text/plain; charset=utf-8",
+  md: "text/markdown; charset=utf-8",
 };
 
 function notFound() {

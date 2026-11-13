@@ -8,7 +8,13 @@ import {
   useTransition,
 } from "react";
 import { renderMarkdownSync } from "@/lib/markdown";
-import { searchMediaAction } from "@/lib/actions/media-actions";
+import { formatSize, isImageMedia } from "@/lib/media-config";
+import { blockPad, spliceBlock, spliceInline } from "@/lib/md-insert";
+import {
+  searchMediaAction,
+  uploadContentAssetAction,
+  uploadContentFileAction,
+} from "@/lib/actions/media-actions";
 
 /**
  * Markdown 文章编辑器。
@@ -48,6 +54,7 @@ const TOOLS: ToolItem[] = [
   { key: "inline", label: "`code`", title: "行内代码", action: { kind: "wrap", before: "`", after: "`", placeholder: "code" } },
   { key: "link", label: "🔗 链接", title: "插入链接（Ctrl+K）", action: { kind: "wrap", before: "[", after: "](https://)", placeholder: "链接文字" } },
   { key: "image", label: "🖼 图片", title: "插入图片（Ctrl+Shift+I）", action: { kind: "wrap", before: "![", after: "](https://)", placeholder: "图片说明" } },
+  { key: "file", label: "📎 文件", title: "上传附件并插入下载链接", action: { kind: "raw", text: "" } },
   { key: "media", label: "📁 素材库", title: "从素材库插入图片", action: { kind: "raw", text: "" } },
   { key: "sep3", label: "", title: "", action: { kind: "raw", text: "" }, sep: true },
   { key: "table", label: "表格", title: "插入表格", action: { kind: "block", before: "| 列1 | 列2 |\n| --- | --- |\n| 内容 | 内容 |\n", after: "", placeholder: "" } },
@@ -56,6 +63,145 @@ const TOOLS: ToolItem[] = [
   { key: "size", label: "🔠 字号", title: "字号", action: { kind: "block", before: '<span style="font-size:', after: 'px">文字</span>', placeholder: "20" } },
   { key: "center", label: "⛶ 居中", title: "居中", action: { kind: "block", before: '<div style="text-align:center">', after: "</div>", placeholder: "居中内容" } },
 ];
+
+/** 代码块语言候选；值直接写进围栏信息串，渲染端（markdown.ts）再做别名归一 */
+const CODE_LANGS: { value: string; label: string }[] = [
+  { value: "text", label: "纯文本" },
+  { value: "javascript", label: "JavaScript" },
+  { value: "typescript", label: "TypeScript" },
+  { value: "jsx", label: "JSX / React" },
+  { value: "tsx", label: "TSX" },
+  { value: "json", label: "JSON" },
+  { value: "yaml", label: "YAML" },
+  { value: "toml", label: "TOML" },
+  { value: "ini", label: "INI / 配置" },
+  { value: "html", label: "HTML" },
+  { value: "css", label: "CSS" },
+  { value: "bash", label: "Shell / Bash" },
+  { value: "powershell", label: "PowerShell" },
+  { value: "dockerfile", label: "Dockerfile" },
+  { value: "makefile", label: "Makefile" },
+  { value: "python", label: "Python" },
+  { value: "go", label: "Go" },
+  { value: "rust", label: "Rust" },
+  { value: "java", label: "Java" },
+  { value: "kotlin", label: "Kotlin" },
+  { value: "swift", label: "Swift" },
+  { value: "c", label: "C" },
+  { value: "cpp", label: "C++" },
+  { value: "csharp", label: "C#" },
+  { value: "php", label: "PHP" },
+  { value: "ruby", label: "Ruby" },
+  { value: "sql", label: "SQL" },
+  { value: "markdown", label: "Markdown" },
+  { value: "diff", label: "Diff" },
+];
+
+/** 附件弹窗放行的类型，与服务端 fileKindFromBytes 的判定保持一致 */
+const FILE_ACCEPT =
+  ".pdf,.docx,.xlsx,.pptx,.zip,.rar,.7z,.gz,.mp3,.mp4,.txt,.md," +
+  ".png,.jpg,.jpeg,.gif,.webp,.avif,.bmp,.ico";
+
+type DialogKind = "image" | "file" | "code";
+type Notice = { kind: "ok" | "error"; text: string };
+
+/** 弹窗底部：提示 + 取消 / 插入 */
+function DialogFoot({
+  notice,
+  okDisabled,
+  onCancel,
+  onOk,
+}: {
+  notice: Notice | null;
+  okDisabled: boolean;
+  onCancel: () => void;
+  onOk: () => void;
+}) {
+  return (
+    <>
+      {notice ? (
+        <div
+          className="hint"
+          style={{
+            marginTop: 8,
+            color: notice.kind === "error" ? "var(--red)" : "var(--green)",
+          }}
+        >
+          {notice.text}
+        </div>
+      ) : null}
+      <div className="md-modal-foot">
+        <button type="button" className="btn btn-sm btn-outline" onClick={onCancel}>
+          取消
+        </button>
+        <button type="button" className="btn btn-sm" onClick={onOk} disabled={okDisabled}>
+          插入
+        </button>
+      </div>
+    </>
+  );
+}
+
+/** 上传相关的入口只在后台编辑器出现，投稿页保持纯语法 */
+const ADMIN_ONLY: Record<string, boolean> = { file: true, media: true };
+
+function EditorModal({
+  title,
+  hint,
+  onClose,
+  children,
+}: {
+  title: string;
+  hint?: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      className="md-modal-mask"
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="md-modal">
+        <div className="md-modal-head">
+          <div>
+            <strong>{title}</strong>
+            {hint ? (
+              <div className="hint" style={{ marginTop: 2 }}>
+                {hint}
+              </div>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            className="btn btn-sm btn-outline"
+            onClick={onClose}
+          >
+            关闭
+          </button>
+        </div>
+        <div className="md-modal-body">{children}</div>
+      </div>
+    </div>
+  );
+}
 
 export default function MarkdownEditor({
   name,
@@ -74,13 +220,28 @@ export default function MarkdownEditor({
   mediaPicker?: boolean;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
+  /** 弹窗会抢走焦点，插入位置必须打开弹窗时就记下来 */
+  const selRef = useRef<{ start: number; end: number } | null>(null);
+  const imgInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [text, setText] = useState(value ?? "");
   const [mode, setMode] = useState<"edit" | "preview">("edit");
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [dialog, setDialog] = useState<DialogKind | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const [uploaded, setUploaded] = useState<{
+    url: string;
+    name: string;
+    mime: string;
+    size: number;
+  } | null>(null);
+  const [linkText, setLinkText] = useState("");
+  const [lang, setLang] = useState("javascript");
+  const [code, setCode] = useState("");
   const [mediaList, setMediaList] = useState<
-    { id: number; url: string; filename: string }[]
+    { id: number; url: string; filename: string; mime: string }[]
   >([]);
-  const [, startTransition] = useTransition();
+  const [pending, startTransition] = useTransition();
 
   // 表单外部重置时同步（例如切换编辑对象）
   useEffect(() => {
@@ -130,12 +291,8 @@ export default function MarkdownEditor({
       if (action.kind === "block") {
         const body = sel || action.placeholder;
         const block = (action.before + body + action.after).trimEnd();
-        // 围栏代码、表格这类块级语法必须自己占一段：紧贴上一行会渲染成纯文本
-        const head = text.slice(0, start);
-        const tail = text.slice(end);
-        const lead = head && !/\n\n$/.test(head) ? (/\n$/.test(head) ? "\n" : "\n\n") : "";
-        const trail = tail && !/^\n\n/.test(tail) ? (tail.startsWith("\n") ? "\n" : "\n\n") : "";
-        const next = head + lead + block + trail + tail;
+        const { lead, trail } = blockPad(text.slice(0, start), text.slice(end));
+        const next = text.slice(0, start) + lead + block + trail + text.slice(end);
         const selStart = start + lead.length + action.before.length;
         replace(next, selStart, selStart + body.length);
         return;
@@ -149,8 +306,32 @@ export default function MarkdownEditor({
     [text, replace]
   );
 
+  /** 打开弹窗前先把光标位置存下来：弹窗一旦拿到焦点，textarea 的选区就不再可靠 */
+  const rememberSel = useCallback(() => {
+    const el = ref.current;
+    const sel = el
+      ? { start: el.selectionStart, end: el.selectionEnd }
+      : { start: text.length, end: text.length };
+    selRef.current = sel;
+    return sel;
+  }, [text.length]);
+
+  /** 弹窗确认后的统一写入口：block 为真时按块级语法补空行 */
+  const insert = useCallback(
+    (snippet: string, block = false) => {
+      const sel = selRef.current ?? { start: text.length, end: text.length };
+      selRef.current = null;
+      const r = block
+        ? spliceBlock(text, sel, snippet)
+        : spliceInline(text, sel, snippet);
+      replace(r.text, r.start, r.end);
+    },
+    [text, replace]
+  );
+
   // 素材库
   const openPicker = useCallback(() => {
+    rememberSel();
     setPickerOpen(true);
     startTransition(async () => {
       const fd = new FormData();
@@ -158,18 +339,102 @@ export default function MarkdownEditor({
       const r = await searchMediaAction(fd);
       if (r.ok) setMediaList(r.items);
     });
+  }, [rememberSel]);
+
+  const closeDialog = useCallback(() => {
+    setDialog(null);
+    setNotice(null);
+    selRef.current = null;
   }, []);
 
-  const insertText = useCallback(
-    (snippet: string) => {
-      const el = ref.current;
-      const start = el?.selectionStart ?? text.length;
-      const end = el?.selectionEnd ?? text.length;
-      const next = text.slice(0, start) + snippet + text.slice(end);
-      replace(next, start + snippet.length, start + snippet.length);
+  const openDialog = useCallback(
+    (kind: DialogKind) => {
+      const sel = rememberSel();
+      setNotice(null);
+      if (kind === "code") {
+        setCode(text.slice(sel.start, sel.end));
+      } else {
+        setUploaded(null);
+        setLinkText("");
+      }
+      setDialog(kind);
     },
-    [text, replace]
+    [rememberSel, text]
   );
+
+  const uploadImage = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    // 清空选择，同一个文件再选一次也能触发 change
+    e.target.value = "";
+    if (!file) return;
+    setNotice(null);
+    startTransition(async () => {
+      try {
+        const fd = new FormData();
+        fd.set("file", file);
+        const r = await uploadContentAssetAction(fd);
+        if (!r.ok) {
+          setNotice({ kind: "error", text: r.error });
+          return;
+        }
+        setUploaded({ url: r.url, name: file.name, mime: file.type, size: file.size });
+        setLinkText((prev) => prev || file.name.replace(/\.[^.]+$/, ""));
+        setNotice({ kind: "ok", text: "已上传并存入素材库，点「插入」写入正文。" });
+      } catch (err) {
+        setNotice({ kind: "error", text: `上传失败：${(err as Error).message}` });
+      }
+    });
+  };
+
+  const uploadFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setNotice(null);
+    startTransition(async () => {
+      try {
+        const fd = new FormData();
+        fd.set("file", file);
+        const r = await uploadContentFileAction(fd);
+        if (!r.ok) {
+          setNotice({ kind: "error", text: r.error });
+          return;
+        }
+        setUploaded({ url: r.url, name: r.filename, mime: r.mime, size: r.size });
+        setLinkText(r.filename);
+        setNotice({ kind: "ok", text: "已上传并存入素材库，点「插入」在光标处生成下载链接。" });
+      } catch (err) {
+        setNotice({ kind: "error", text: `上传失败：${(err as Error).message}` });
+      }
+    });
+  };
+
+  const insertImage = () => {
+    if (!uploaded) return;
+    insert(`![${linkText || uploaded.name}](${uploaded.url})`);
+    closeDialog();
+  };
+
+  const insertFile = () => {
+    if (!uploaded) return;
+    insert(`[${linkText || uploaded.name}](${uploaded.url})`);
+    closeDialog();
+  };
+
+  const insertCode = () => {
+    const body = code.replace(/\s+$/, "");
+    if (!body) return;
+    insert("```" + lang + "\n" + body + "\n```", true);
+    closeDialog();
+  };
+
+  /** 工具栏按钮对应哪个弹窗；投稿页的图片仍走纯语法包裹 */
+  const dialogOf = (key: string): DialogKind | null => {
+    if (key === "code") return "code";
+    if (key === "file") return "file";
+    if (mediaPicker && key === "image") return "image";
+    return null;
+  };
 
   // 快捷键
   useEffect(() => {
@@ -189,10 +454,11 @@ export default function MarkdownEditor({
         apply({ kind: "wrap", before: "~~", after: "~~", placeholder: "删除线" });
       } else if (mod && e.shiftKey && e.key.toLowerCase() === "c") {
         e.preventDefault();
-        apply({ kind: "block", before: "```\n", after: "\n```", placeholder: "code" });
+        openDialog("code");
       } else if (mod && e.shiftKey && e.key.toLowerCase() === "i") {
         e.preventDefault();
-        apply({ kind: "wrap", before: "![", after: "](https://)", placeholder: "图片说明" });
+        if (mediaPicker) openDialog("image");
+        else apply({ kind: "wrap", before: "![", after: "](https://)", placeholder: "图片说明" });
       } else if (mod && !e.shiftKey && e.key.toLowerCase() === "k") {
         e.preventDefault();
         apply({ kind: "wrap", before: "[", after: "](https://)", placeholder: "链接文字" });
@@ -206,7 +472,7 @@ export default function MarkdownEditor({
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [apply]);
+  }, [apply, openDialog, mediaPicker]);
 
   const html = mode === "preview" ? renderMarkdownSync(text) : "";
   const words = text.replace(/\s/g, "").length;
@@ -216,8 +482,8 @@ export default function MarkdownEditor({
       <div className="md-toolbar">
         {TOOLS.map((t) => {
           if (t.sep) return <span key={t.key} className="md-sep" />;
+          if (ADMIN_ONLY[t.key] && !mediaPicker) return null;
           if (t.key === "media") {
-            if (!mediaPicker) return null;
             return (
               <button
                 key={t.key}
@@ -230,6 +496,7 @@ export default function MarkdownEditor({
               </button>
             );
           }
+          const kind = dialogOf(t.key);
           return (
             <button
               key={t.key}
@@ -237,7 +504,7 @@ export default function MarkdownEditor({
               className="md-btn"
               title={t.title}
               onMouseDown={(e) => e.preventDefault()}
-              onClick={() => apply(t.action)}
+              onClick={kind ? () => openDialog(kind) : () => apply(t.action)}
             >
               {t.label}
             </button>
@@ -316,17 +583,180 @@ export default function MarkdownEditor({
                   className="md-picker-item"
                   title={m.filename}
                   onClick={() => {
-                    insertText(`![${m.filename}](${m.url})`);
+                    insert(
+                      isImageMedia(m)
+                        ? `![${m.filename}](${m.url})`
+                        : `[${m.filename}](${m.url})`
+                    );
                     setPickerOpen(false);
                   }}
                 >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={m.url} alt={m.filename} />
+                  {isImageMedia(m) ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={m.url} alt={m.filename} />
+                  ) : (
+                    <span className="md-picker-file">{m.filename}</span>
+                  )}
                 </button>
               ))}
             </div>
           )}
         </div>
+      ) : null}
+
+      {dialog === "image" ? (
+        <EditorModal
+          title="插入图片"
+          hint="选本地图片上传，会同时存入素材库；点「插入」写入正文光标处。"
+          onClose={closeDialog}
+        >
+          <div className="input-row">
+            <span className="hint truncate" title={uploaded?.name}>
+              {uploaded
+                ? `${uploaded.name} · ${formatSize(uploaded.size)}`
+                : "支持 PNG / JPEG / GIF / WebP / AVIF / SVG 等，单张上限 8MB"}
+            </span>
+            <button
+              type="button"
+              className="btn btn-sm btn-outline"
+              disabled={pending}
+              onClick={() => imgInputRef.current?.click()}
+            >
+              {pending ? "上传中…" : uploaded ? "更换图片" : "选择图片"}
+            </button>
+          </div>
+          {uploaded ? (
+            <div className="md-upload-preview">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={uploaded.url} alt={uploaded.name} />
+            </div>
+          ) : null}
+          <div className="field" style={{ marginTop: 12, marginBottom: 0 }}>
+            <label className="label">图片说明（alt，可选）</label>
+            <input
+              className="input"
+              value={linkText}
+              onChange={(e) => setLinkText(e.target.value)}
+              placeholder="读屏与图片加载失败时显示的文字"
+            />
+          </div>
+          <DialogFoot
+            notice={notice}
+            okDisabled={!uploaded || pending}
+            onCancel={closeDialog}
+            onOk={insertImage}
+          />
+          <input
+            ref={imgInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/gif,image/webp,image/avif,image/bmp,image/x-icon,image/svg+xml,.svg"
+            hidden
+            onChange={uploadImage}
+          />
+        </EditorModal>
+      ) : null}
+
+      {dialog === "file" ? (
+        <EditorModal
+          title="添加文件"
+          hint="上传附件并写入正在编辑的文章，同时在素材库留档；正文里生成下载链接。"
+          onClose={closeDialog}
+        >
+          <div className="input-row">
+            <span className="hint truncate" title={uploaded?.name}>
+              {uploaded
+                ? `${uploaded.name} · ${formatSize(uploaded.size)}`
+                : "文档 / 压缩包 / 音视频 / 图片 / 纯文本，单个上限 20MB"}
+            </span>
+            <button
+              type="button"
+              className="btn btn-sm btn-outline"
+              disabled={pending}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              {pending ? "上传中…" : uploaded ? "更换文件" : "选择文件"}
+            </button>
+          </div>
+          {uploaded ? (
+            <div className="md-upload-preview">
+              {uploaded.mime.startsWith("image/") ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={uploaded.url} alt={uploaded.name} />
+              ) : (
+                <div className="md-upload-file">
+                  <strong>{uploaded.name}</strong>
+                  <span className="text-muted text-sm">
+                    {uploaded.mime || "未知类型"} · {formatSize(uploaded.size)}
+                  </span>
+                  <a href={uploaded.url} target="_blank" rel="noreferrer">
+                    打开 / 下载
+                  </a>
+                </div>
+              )}
+            </div>
+          ) : null}
+          <div className="field" style={{ marginTop: 12, marginBottom: 0 }}>
+            <label className="label">链接文字</label>
+            <input
+              className="input"
+              value={linkText}
+              onChange={(e) => setLinkText(e.target.value)}
+              placeholder={uploaded?.name ?? "正文里显示的文字"}
+            />
+          </div>
+          <DialogFoot
+            notice={notice}
+            okDisabled={!uploaded || pending}
+            onCancel={closeDialog}
+            onOk={insertFile}
+          />
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={FILE_ACCEPT}
+            hidden
+            onChange={uploadFile}
+          />
+        </EditorModal>
+      ) : null}
+
+      {dialog === "code" ? (
+        <EditorModal
+          title="插入代码块"
+          hint="选语言、填内容，点「插入」写入正文光标处。选中过的文字会自动带进来。"
+          onClose={closeDialog}
+        >
+          <div className="field">
+            <label className="label">语言</label>
+            <select
+              className="select"
+              value={lang}
+              onChange={(e) => setLang(e.target.value)}
+            >
+              {CODE_LANGS.map((l) => (
+                <option key={l.value} value={l.value}>
+                  {l.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field" style={{ marginBottom: 0 }}>
+            <label className="label">代码内容</label>
+            <textarea
+              className="textarea md-code-input"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="把代码粘贴在这里…"
+              spellCheck={false}
+            />
+          </div>
+          <DialogFoot
+            notice={notice}
+            okDisabled={!code.trim()}
+            onCancel={closeDialog}
+            onOk={insertCode}
+          />
+        </EditorModal>
       ) : null}
     </div>
   );
