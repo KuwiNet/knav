@@ -113,7 +113,7 @@ function DialogFoot({
   onOk,
 }: {
   notice: Notice | null;
-  okDisabled: boolean;
+  okDisabled?: boolean;
   onCancel: () => void;
   onOk: () => void;
 }) {
@@ -316,14 +316,14 @@ export default function MarkdownEditor({
     return sel;
   }, [text.length]);
 
-  /** 弹窗确认后的统一写入口：block 为真时按块级语法补空行 */
+  /** 弹窗确认后的统一写入口：block 为真时按块级语法补空行，caretIn 把光标停在片段内 */
   const insert = useCallback(
-    (snippet: string, block = false) => {
+    (snippet: string, block = false, caretIn?: number) => {
       const sel = selRef.current ?? { start: text.length, end: text.length };
       selRef.current = null;
       const r = block
-        ? spliceBlock(text, sel, snippet)
-        : spliceInline(text, sel, snippet);
+        ? spliceBlock(text, sel, snippet, caretIn)
+        : spliceInline(text, sel, snippet, caretIn);
       replace(r.text, r.start, r.end);
     },
     [text, replace]
@@ -409,9 +409,12 @@ export default function MarkdownEditor({
     });
   };
 
+  /** 没上传时也允许插入：地址槽留 https:// 占位，光标停在里面，稍后补地址 */
   const insertImage = () => {
-    if (!uploaded) return;
-    insert(`![${linkText || uploaded.name}](${uploaded.url})`);
+    const alt = linkText || uploaded?.name || "";
+    const url = uploaded?.url ?? "https://";
+    const snippet = `![${alt}](${url})`;
+    insert(snippet, false, snippet.length - 1);
     closeDialog();
   };
 
@@ -421,10 +424,15 @@ export default function MarkdownEditor({
     closeDialog();
   };
 
+  /** 内容留空则插入空围栏，光标停在围栏内的空行上，稍后直接敲代码 */
   const insertCode = () => {
+    const open = "```" + lang + "\n";
     const body = code.replace(/\s+$/, "");
-    if (!body) return;
-    insert("```" + lang + "\n" + body + "\n```", true);
+    if (!body.trim()) {
+      insert(open + "```", true, open.length);
+    } else {
+      insert(open + body + "\n```", true);
+    }
     closeDialog();
   };
 
@@ -607,7 +615,7 @@ export default function MarkdownEditor({
       {dialog === "image" ? (
         <EditorModal
           title="插入图片"
-          hint="选本地图片上传，会同时存入素材库；点「插入」写入正文光标处。"
+          hint="选本地图片上传，会同时存入素材库；点「插入」写入正文光标处。还没上传也可以先插一个空图片，稍后再把地址补进括号里。"
           onClose={closeDialog}
         >
           <div className="input-row">
@@ -642,7 +650,7 @@ export default function MarkdownEditor({
           </div>
           <DialogFoot
             notice={notice}
-            okDisabled={!uploaded || pending}
+            okDisabled={pending}
             onCancel={closeDialog}
             onOk={insertImage}
           />
@@ -723,7 +731,7 @@ export default function MarkdownEditor({
       {dialog === "code" ? (
         <EditorModal
           title="插入代码块"
-          hint="选语言、填内容，点「插入」写入正文光标处。选中过的文字会自动带进来。"
+          hint="选语言、填内容，点「插入」写入正文光标处。选中过的文字会自动带进来；内容留空就先插一个空代码块，光标停在里面，回头接着写。"
           onClose={closeDialog}
         >
           <div className="field">
@@ -741,7 +749,7 @@ export default function MarkdownEditor({
             </select>
           </div>
           <div className="field" style={{ marginBottom: 0 }}>
-            <label className="label">代码内容</label>
+            <label className="label">代码内容（可选，留空插入空代码块）</label>
             <textarea
               className="textarea md-code-input"
               value={code}
@@ -752,7 +760,6 @@ export default function MarkdownEditor({
           </div>
           <DialogFoot
             notice={notice}
-            okDisabled={!code.trim()}
             onCancel={closeDialog}
             onOk={insertCode}
           />

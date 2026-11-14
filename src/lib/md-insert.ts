@@ -21,19 +21,32 @@ export function blockPad(head: string, tail: string): {
   return { lead, trail };
 }
 
-/** 行内片段（图片、链接）：直接替换选区，光标停在片段之后 */
-export function spliceInline(text: string, sel: Sel, snippet: string): Splice {
+/**
+ * 行内片段（图片、链接）：直接替换选区。
+ * caretIn 给定时光标停在片段内的这个偏移，否则停在片段之后。
+ */
+export function spliceInline(
+  text: string,
+  sel: Sel,
+  snippet: string,
+  caretIn?: number
+): Splice {
   const next = text.slice(0, sel.start) + snippet + text.slice(sel.end);
-  const caret = sel.start + snippet.length;
+  const caret = sel.start + (caretIn ?? snippet.length);
   return { text: next, start: caret, end: caret };
 }
 
-/** 块级片段（代码块）：先补足空行再替换选区 */
-export function spliceBlock(text: string, sel: Sel, block: string): Splice {
+/** 块级片段（代码块）：先补足空行再替换选区，光标规则同上 */
+export function spliceBlock(
+  text: string,
+  sel: Sel,
+  block: string,
+  caretIn?: number
+): Splice {
   const head = text.slice(0, sel.start);
   const tail = text.slice(sel.end);
   const { lead, trail } = blockPad(head, tail);
   const next = head + lead + block + trail + tail;
-  const caret = sel.start + lead.length + block.length;
+  const caret = sel.start + lead.length + (caretIn ?? block.length);
   return { text: next, start: caret, end: caret };
 }
