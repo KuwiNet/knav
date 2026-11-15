@@ -11,6 +11,7 @@ import { SiteNotice } from "@/components/site-notice";
 import FloatingActions from "@/components/floating-actions";
 import WallpaperLayer from "@/components/wallpaper-layer";
 import { IconFontProvider } from "@/components/iconfont-provider";
+import CustomCode from "@/components/custom-code";
 
 export const dynamic = "force-dynamic";
 
@@ -89,12 +90,8 @@ document.documentElement.setAttribute("data-theme",d);
           }}
         />
         {/* 后台「统计与代码」里配置的自定义代码，插入到页面头部 */}
-        {cfg.headCode ? (
-          <script dangerouslySetInnerHTML={{ __html: cfg.headCode }} />
-        ) : null}
-        {cfg.analyticsCode ? (
-          <script dangerouslySetInnerHTML={{ __html: cfg.analyticsCode }} />
-        ) : null}
+        {cfg.headCode ? <CustomCode html={cfg.headCode} /> : null}
+        {cfg.analyticsCode ? <CustomCode html={cfg.analyticsCode} /> : null}
       </head>
       <body>
         <IconFontProvider
@@ -137,9 +134,7 @@ document.documentElement.setAttribute("data-theme",d);
           <FloatingActions />
         </IconFontProvider>
 
-        {cfg.bodyCode ? (
-          <script dangerouslySetInnerHTML={{ __html: cfg.bodyCode }} />
-        ) : null}
+        {cfg.bodyCode ? <CustomCode html={cfg.bodyCode} /> : null}
       </body>
     </html>
   );
