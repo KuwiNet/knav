@@ -446,7 +446,7 @@ jobs:
             exit 0
           fi
           cat > /tmp/del-tag.py <<'PYEOF'
-          import base64, json, sys, urllib.error, urllib.parse, urllib.request
+          import base64, json, re, sys, urllib.error, urllib.parse, urllib.request
 
           ACCEPT = ",".join([
               "application/vnd.oci.image.index.v1+json",
@@ -466,11 +466,8 @@ jobs:
                   return 0, {}, str(e).encode()
 
           def parse_challenge(value):
-              out = {}
-              for part in value.split(","):
-                  key, _, val = part.strip().partition("=")
-                  out[key.strip()] = val.strip().strip('"')
-              return out
+              # 形如：Bearer realm="https://host/auth",service="svc",scope="repository:x:pull"
+              return {k.lower(): v for k, v in re.findall(r'([A-Za-z_]+)="([^"]*)"', value)}
 
           def get_token(host, repo, user, password):
               st, hdrs, _ = request(
@@ -481,18 +478,20 @@ jobs:
               realm = c.get("realm") or "https://{}/token".format(host)
               service = c.get("service") or host.split(":")[0]
               scopes = []
-              for s in ("repository:{}:pull,push,delete".format(repo), c.get("scope")):
+              for s in ("repository:{}:pull,push,delete".format(repo),
+                        "repository:{}:pull,push".format(repo),
+                        c.get("scope")):
                   if s and s not in scopes:
                       scopes.append(s)
               auth = "Basic " + base64.b64encode("{}:{}".format(user, password).encode()).decode()
               last = ""
               for scope in scopes:
-                  url = "{}?service={}&scope={}".format(
-                      realm, urllib.parse.quote(service, safe=""),
-                      urllib.parse.quote(scope, safe=""))
+                  # ACR 的 auth 端点对 %3A / %2C 不解码，service 与 scope 里的 : , 保持原样
+                  url = "{}?service={}&scope={}".format(realm, service, scope)
                   st, _, body = request(url, headers={"Authorization": auth})
                   if st != 200:
                       last = "HTTP {}".format(st)
+                      print("ACR：取 token 失败 {}（scope {}）{}".format(last, scope, body[:120]))
                       continue
                   try:
                       data = json.loads(body)
