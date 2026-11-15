@@ -322,12 +322,16 @@ jobs:
           fi
           echo "Hub 概述已更新（来源 docker/hub-overview.md，$(wc -c < docker/hub-overview.md) 字节）"
 
-      # 删 Hub 上的过时 tag（比如不再生产的 main）：走同一个账号级 JWT，删 tag 需要账号权限，
-      # registry 令牌不行。用 workflow_dispatch 的 delete_tags 输入触发，可与 only_description 同用。
-      - name: 删除 Docker Hub 上的过时 tag
+      # 删各仓库上的过时 tag（比如不再生产的 main）：Hub 走账号级 JWT 的 web API，
+      # GHCR / ACR 用各自的登录凭据 + buildx imagetools rm。用 workflow_dispatch 的 delete_tags 输入触发。
+      - name: 删除各仓库上的过时 tag
         if: ${{ github.event.inputs.delete_tags != '' }}
         env:
           DELETE_TAGS: ${{ github.event.inputs.delete_tags }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+          ACR_IMAGE: ${{ vars.ACR_IMAGE }}
         run: |
           set -euo pipefail
           if [ -z "${DOCKERHUB_USERNAME:-}" ]; then
@@ -349,16 +353,44 @@ jobs:
             exit 1
           fi
 
+          ghcr_ready=0
+          if printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin >/dev/null 2>&1; then
+            ghcr_ready=1
+          else
+            echo "::notice::GHCR 登录失败，跳过 GHCR 上的删除"
+          fi
+
+          acr_ready=0
+          if [ -n "${ACR_USERNAME:-}" ] && [ -n "${ACR_IMAGE:-}" ]; then
+            if printf '%s' "$ACR_PASSWORD" | docker login "${ACR_IMAGE%%/*}" -u "$ACR_USERNAME" --password-stdin >/dev/null 2>&1; then
+              acr_ready=1
+            else
+              echo "::notice::ACR 登录失败，跳过 ACR 上的删除"
+            fi
+          fi
+
           IFS=',' read -ra tags <<< "$DELETE_TAGS"
           for t in "${tags[@]}"; do
             t="$(printf '%s' "$t" | tr -d '[:space:]')"
             [ -n "$t" ] || continue
+
             code="$(curl -sS -o /tmp/hub-del.json -w '%{http_code}' -X DELETE \
               -H "Authorization: Bearer $jwt" \
               "https://hub.docker.com/v2/repositories/${HUB_IMAGE}/tags/$t")"
             case "$code" in
-              200|202|204) echo "已删除 tag $t" ;;
-              404) echo "tag $t 本来就不存在，跳过" ;;
-              *) echo "删除 tag $t 失败：HTTP $code" >&2; cat /tmp/hub-del.json >&2; exit 1 ;;
+              200|202|204) echo "Hub：已删除 tag $t" ;;
+              404) echo "Hub：tag $t 本来就不存在，跳过" ;;
+              *) echo "Hub：删除 tag $t 失败：HTTP $code" >&2; cat /tmp/hub-del.json >&2; exit 1 ;;
             esac
+
+            if [ "$ghcr_ready" = 1 ]; then
+              # 引用名必须全小写，imagetools 不会自动小写化
+              docker buildx imagetools rm "ghcr.io/kuwinet/knav:$t" 2>&1 | tail -1 \
+                || echo "GHCR：删除 tag $t 失败（可能本来就没有）"
+            fi
+
+            if [ "$acr_ready" = 1 ]; then
+              docker buildx imagetools rm "${ACR_IMAGE}:$t" 2>&1 | tail -1 \
+                || echo "ACR：删除 tag $t 失败（可能本来就没有）"
+            fi
           done
