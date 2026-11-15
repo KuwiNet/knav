@@ -459,9 +459,9 @@ jobs:
               req = urllib.request.Request(url, method=method, headers=headers or {})
               try:
                   with urllib.request.urlopen(req, timeout=60) as resp:
-                      return resp.status, dict(resp.headers), resp.read()
+                      return resp.status, {k.lower(): v for k, v in resp.headers.items()}, resp.read()
               except urllib.error.HTTPError as e:
-                  return e.code, dict(e.headers), e.read()
+                  return e.code, {k.lower(): v for k, v in e.headers.items()}, e.read()
               except Exception as e:
                   return 0, {}, str(e).encode()
 
@@ -476,7 +476,7 @@ jobs:
               st, hdrs, _ = request(
                   "https://{}/v2/{}/manifests/knav-delete-probe".format(host, repo),
                   headers={"Accept": ACCEPT})
-              chal = hdrs.get("www-authenticate") or hdrs.get("WWW-Authenticate") or ""
+              chal = hdrs.get("www-authenticate") or ""
               c = parse_challenge(chal)
               realm = c.get("realm") or "https://{}/token".format(host)
               service = c.get("service") or host.split(":")[0]
@@ -524,7 +524,13 @@ jobs:
                   method="DELETE", headers={"Authorization": "Bearer " + token})
               if st in (200, 202, 204):
                   return "已删除（digest {}）".format(digest[:19])
-              return "删除失败：HTTP {} {}".format(st, body[:160])
+              # 有些 registry 不接受按 digest 删，只认 tag 引用
+              st2, _, body2 = request(
+                  "https://{}/v2/{}/manifests/{}".format(host, repo, tag),
+                  method="DELETE", headers={"Authorization": "Bearer " + token})
+              if st2 in (200, 202, 204):
+                  return "已删除（按 tag 引用）"
+              return "删除失败：digest HTTP {} {}；tag HTTP {} {}".format(st, body[:100], st2, body2[:100])
 
           host, repo, user, password, tag = sys.argv[1:6]
           print("{}:{} → {}".format(host, repo, tag), delete_tag(host, repo, tag, user, password))
