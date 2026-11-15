@@ -322,20 +322,19 @@ jobs:
           fi
           echo "Hub 概述已更新（来源 docker/hub-overview.md，$(wc -c < docker/hub-overview.md) 字节）"
 
-      # 删各仓库上的过时 tag（比如不再生产的 main）：Hub 走账号级 JWT 的 web API，
-      # GHCR / ACR 用各自的登录凭据 + buildx imagetools rm。用 workflow_dispatch 的 delete_tags 输入触发。
-      - name: 删除各仓库上的过时 tag
+      # 删各仓库上的过时 tag（比如不再生产的 main）：
+      #   Hub  → 账号级 JWT 的 web API（DELETE /v2/repositories/<命名空间>/<仓库>/tags/<tag>）
+      #   GHCR → registry 层不支持删 manifest（实测 405 UNSUPPORTED），走 GitHub Packages REST API 删版本
+      #   ACR  → 试 registry v2 的 manifest DELETE（ACR 若不支持就打印原因，不影响别的仓库）
+      # 用 workflow_dispatch 的 delete_tags 输入触发（逗号分隔的 tag 名）。
+      - name: 删除 Docker Hub 上的过时 tag
         if: ${{ github.event.inputs.delete_tags != '' }}
         env:
           DELETE_TAGS: ${{ github.event.inputs.delete_tags }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
-          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
-          ACR_IMAGE: ${{ vars.ACR_IMAGE }}
         run: |
           set -euo pipefail
           if [ -z "${DOCKERHUB_USERNAME:-}" ]; then
-            echo "::notice::未配置 DOCKERHUB_USERNAME，跳过删除 tag"
+            echo "::notice::未配置 DOCKERHUB_USERNAME，跳过 Hub 上的删除"
             exit 0
           fi
 
@@ -353,27 +352,10 @@ jobs:
             exit 1
           fi
 
-          ghcr_ready=0
-          if printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin >/dev/null 2>&1; then
-            ghcr_ready=1
-          else
-            echo "::notice::GHCR 登录失败，跳过 GHCR 上的删除"
-          fi
-
-          acr_ready=0
-          if [ -n "${ACR_USERNAME:-}" ] && [ -n "${ACR_IMAGE:-}" ]; then
-            if printf '%s' "$ACR_PASSWORD" | docker login "${ACR_IMAGE%%/*}" -u "$ACR_USERNAME" --password-stdin >/dev/null 2>&1; then
-              acr_ready=1
-            else
-              echo "::notice::ACR 登录失败，跳过 ACR 上的删除"
-            fi
-          fi
-
           IFS=',' read -ra tags <<< "$DELETE_TAGS"
           for t in "${tags[@]}"; do
             t="$(printf '%s' "$t" | tr -d '[:space:]')"
             [ -n "$t" ] || continue
-
             code="$(curl -sS -o /tmp/hub-del.json -w '%{http_code}' -X DELETE \
               -H "Authorization: Bearer $jwt" \
               "https://hub.docker.com/v2/repositories/${HUB_IMAGE}/tags/$t")"
@@ -382,15 +364,177 @@ jobs:
               404) echo "Hub：tag $t 本来就不存在，跳过" ;;
               *) echo "Hub：删除 tag $t 失败：HTTP $code" >&2; cat /tmp/hub-del.json >&2; exit 1 ;;
             esac
+          done
 
-            if [ "$ghcr_ready" = 1 ]; then
-              # 引用名必须全小写，imagetools 不会自动小写化
-              docker buildx imagetools rm "ghcr.io/kuwinet/knav:$t" 2>&1 | tail -1 \
-                || echo "GHCR：删除 tag $t 失败（可能本来就没有）"
-            fi
+      - name: 删除 GHCR 上的过时 tag
+        if: ${{ github.event.inputs.delete_tags != '' }}
+        env:
+          DELETE_TAGS: ${{ github.event.inputs.delete_tags }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PYEOF'
+          import json, os, sys, urllib.error, urllib.request
 
-            if [ "$acr_ready" = 1 ]; then
-              docker buildx imagetools rm "${ACR_IMAGE}:$t" 2>&1 | tail -1 \
-                || echo "ACR：删除 tag $t 失败（可能本来就没有）"
-            fi
+          token = os.environ["GHCR_TOKEN"]
+          owner = os.environ["GHCR_OWNER"]
+          package = "knav"
+          targets = [t.strip() for t in os.environ["DELETE_TAGS"].split(",") if t.strip()]
+
+          def api(path, method="GET"):
+              req = urllib.request.Request(
+                  "https://api.github.com" + path, method=method,
+                  headers={"Authorization": "Bearer " + token,
+                           "Accept": "application/vnd.github+json",
+                           "X-GitHub-Api-Version": "2022-11-28"})
+              try:
+                  with urllib.request.urlopen(req, timeout=60) as resp:
+                      return resp.status, resp.read()
+              except urllib.error.HTTPError as e:
+                  return e.code, e.read()
+              except Exception as e:
+                  return 0, str(e).encode()
+
+          def list_versions():
+              for path in ("/user/packages/container/{}/versions?per_page=100".format(package),
+                           "/users/{}/packages/container/{}/versions?per_page=100".format(owner, package)):
+                  st, body = api(path)
+                  if st == 200:
+                      try:
+                          return path, json.loads(body)
+                      except Exception:
+                          pass
+                  print("GHCR：列版本 {} 失败 → HTTP {} {}".format(path, st, body[:120]))
+              return None, []
+
+          list_path, items = list_versions()
+          if not list_path:
+              print("GHCR：拿不到版本列表，跳过删除")
+              sys.exit(0)
+          print("GHCR：版本列表来自 {}".format(list_path))
+          for item in items:
+              meta = item.get("metadata") or {}
+              tags = list((meta.get("container") or {}).get("tags") or [])
+              hit = [t for t in tags if t in targets]
+              if not hit:
+                  continue
+              extra = sorted(set(tags) - set(hit))
+              if extra:
+                  print("GHCR：版本 {} 上还有别的 tag {}，跳过（删版本会连它们一起删）".format(item["id"], extra))
+                  continue
+              st, body = api("/user/packages/container/{}/versions/{}".format(package, item["id"]), method="DELETE")
+              if st not in (200, 202, 204):
+                  st, body = api("/users/{}/packages/container/{}/versions/{}".format(owner, package, item["id"]), method="DELETE")
+              if st in (200, 202, 204):
+                  print("GHCR：已删除 tag {}（版本 {}）".format(",".join(hit), item["id"]))
+              else:
+                  print("GHCR：删除版本 {} 失败：HTTP {} {}".format(item["id"], st, body[:160]))
+          PYEOF
+
+      - name: 删除 ACR 上的过时 tag
+        if: ${{ github.event.inputs.delete_tags != '' }}
+        env:
+          DELETE_TAGS: ${{ github.event.inputs.delete_tags }}
+          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+          ACR_IMAGE: ${{ vars.ACR_IMAGE }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ACR_USERNAME:-}" ] || [ -z "${ACR_IMAGE:-}" ]; then
+            echo "::notice::未配置 ACR 凭据或 ACR_IMAGE，跳过 ACR 上的删除"
+            exit 0
+          fi
+          cat > /tmp/del-tag.py <<'PYEOF'
+          import base64, json, sys, urllib.error, urllib.parse, urllib.request
+
+          ACCEPT = ",".join([
+              "application/vnd.oci.image.index.v1+json",
+              "application/vnd.docker.distribution.manifest.list.v2+json",
+              "application/vnd.oci.image.manifest.v1+json",
+              "application/vnd.docker.distribution.manifest.v2+json",
+          ])
+
+          def request(url, method="GET", headers=None):
+              req = urllib.request.Request(url, method=method, headers=headers or {})
+              try:
+                  with urllib.request.urlopen(req, timeout=60) as resp:
+                      return resp.status, dict(resp.headers), resp.read()
+              except urllib.error.HTTPError as e:
+                  return e.code, dict(e.headers), e.read()
+              except Exception as e:
+                  return 0, {}, str(e).encode()
+
+          def parse_challenge(value):
+              out = {}
+              for part in value.split(","):
+                  key, _, val = part.strip().partition("=")
+                  out[key.strip()] = val.strip().strip('"')
+              return out
+
+          def get_token(host, repo, user, password):
+              st, hdrs, _ = request(
+                  "https://{}/v2/{}/manifests/knav-delete-probe".format(host, repo),
+                  headers={"Accept": ACCEPT})
+              chal = hdrs.get("www-authenticate") or hdrs.get("WWW-Authenticate") or ""
+              c = parse_challenge(chal)
+              realm = c.get("realm") or "https://{}/token".format(host)
+              service = c.get("service") or host.split(":")[0]
+              scopes = []
+              for s in ("repository:{}:pull,push,delete".format(repo), c.get("scope")):
+                  if s and s not in scopes:
+                      scopes.append(s)
+              auth = "Basic " + base64.b64encode("{}:{}".format(user, password).encode()).decode()
+              last = ""
+              for scope in scopes:
+                  url = "{}?service={}&scope={}".format(
+                      realm, urllib.parse.quote(service, safe=""),
+                      urllib.parse.quote(scope, safe=""))
+                  st, _, body = request(url, headers={"Authorization": auth})
+                  if st != 200:
+                      last = "HTTP {}".format(st)
+                      continue
+                  try:
+                      data = json.loads(body)
+                  except Exception:
+                      last = "响应不是 JSON"
+                      continue
+                  tok = data.get("token") or data.get("access_token")
+                  if tok:
+                      return tok, ""
+                  last = "响应里没有 token 字段"
+              return None, last
+
+          def delete_tag(host, repo, tag, user, password):
+              token, err = get_token(host, repo, user, password)
+              if not token:
+                  return "取 token 失败（{}）".format(err)
+              url = "https://{}/v2/{}/manifests/{}".format(host, repo, tag)
+              auth = {"Authorization": "Bearer " + token, "Accept": ACCEPT}
+              st, hdrs, body = request(url, method="HEAD", headers=auth)
+              if st == 404:
+                  return "本来就不存在"
+              if st != 200:
+                  return "取 manifest 失败：HTTP {} {}".format(st, body[:120])
+              digest = hdrs.get("docker-content-digest") or hdrs.get("Docker-Content-Digest")
+              if not digest:
+                  return "响应里没有 digest"
+              st, _, body = request(
+                  "https://{}/v2/{}/manifests/{}".format(host, repo, digest),
+                  method="DELETE", headers={"Authorization": "Bearer " + token})
+              if st in (200, 202, 204):
+                  return "已删除（digest {}）".format(digest[:19])
+              return "删除失败：HTTP {} {}".format(st, body[:160])
+
+          host, repo, user, password, tag = sys.argv[1:6]
+          print("{}:{} → {}".format(host, repo, tag), delete_tag(host, repo, tag, user, password))
+          PYEOF
+
+          acr_host="${ACR_IMAGE%%/*}"
+          acr_repo="${ACR_IMAGE#*/}"
+          IFS=',' read -ra tags <<< "$DELETE_TAGS"
+          for t in "${tags[@]}"; do
+            t="$(printf '%s' "$t" | tr -d '[:space:]')"
+            [ -n "$t" ] || continue
+            python3 /tmp/del-tag.py "$acr_host" "$acr_repo" "$ACR_USERNAME" "$ACR_PASSWORD" "$t" | sed 's/^/ACR：/'
           done
