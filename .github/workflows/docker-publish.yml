@@ -469,6 +469,16 @@ jobs:
               # 形如：Bearer realm="https://host/auth",service="svc",scope="repository:x:pull"
               return {k.lower(): v for k, v in re.findall(r'([A-Za-z_]+)="([^"]*)"', value)}
 
+          def decode_scope(tok):
+              # ACR 的 token 是 JWT，第二段里能看到拿到的权限动作
+              try:
+                  seg = tok.split(".")[1]
+                  seg += "=" * (-len(seg) % 4)
+                  data = json.loads(base64.urlsafe_b64decode(seg).decode("utf-8", "replace"))
+                  return data.get("access") or data.get("scope") or data
+              except Exception:
+                  return "无法解析"
+
           def get_token(host, repo, user, password):
               st, hdrs, _ = request(
                   "https://{}/v2/{}/manifests/knav-delete-probe".format(host, repo),
@@ -500,6 +510,7 @@ jobs:
                       continue
                   tok = data.get("token") or data.get("access_token")
                   if tok:
+                      print("ACR：token scope={}".format(decode_scope(tok)))
                       return tok, ""
                   last = "响应里没有 token 字段"
               return None, last
