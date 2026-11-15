@@ -9,9 +9,11 @@
 #       中间标签只留 GHCR 一处，Hub 的 tag 列表是给用户看的；每次发版 GHCR 多两条 -amd64/-arm64。
 #
 # 触发：打 v* tag 时自动跑；也可在 Actions 页面手动运行（workflow_dispatch）。
-# 产物 tag：<版本>（如 0.1.4）与 <主>.<次>（如 0.1）、latest（tag 与默认分支都打）、分支名（手动运行）。
+# 产物 tag：<版本>（如 0.1.4）与 <主>.<次>（如 0.1）、latest（tag 与默认分支都打）、git tag 原名（如 v0.1.4）。
 # 版本号标签只有推 v* tag 那次才有：type=semver 解析的是 refs/tags/v*，而 workflow_dispatch 的
-# github.ref_type 恒为 branch，手动跑只出 latest + 分支名。
+# github.ref_type 恒为 branch，手动跑只出 latest。
+# **不再打分支名 tag（原先的 main）**：它只在手动 dispatch 分支时产生，内容永远落后于最新版本号 tag，
+# 用户容易误拉旧镜像。Hub 上已经存在的 main tag 用 workflow_dispatch 的 delete_tags 输入删掉。
 # 没有 DOCKERHUB_USERNAME 这个 Secret 时只推 GHCR，Hub 相关步骤会跳过并打印跳过原因。
 #
 # 改这个文件：HTTPS + PAT 推需要令牌带 `workflow` scope（只有 `repo` 会被 GitHub 拒，
@@ -33,6 +35,10 @@ on:
         description: 只同步 Docker Hub 概述，不构建镜像（改了 hub-overview.md 时用）
         type: boolean
         default: false
+      delete_tags:
+        description: 删除 Docker Hub 上这些过时的 tag（逗号分隔，如 main）
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -91,7 +97,8 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=ref,event=tag
-            type=ref,event=branch
+            # 不再打分支名 tag（原先的 main）：它只在手动 dispatch 分支时产生，内容会永远落后于
+            # 最新版本号 tag，用户容易误拉旧镜像。最新版本一律用 latest / 0.1.x / v0.1.x 表达。
             # latest 两条都要：一键安装脚本默认拉 kuwinet/knav:latest，
             # 而 metadata 的 {{is_default_branch}} 在 tag 事件下是 false，光靠它推不出 latest
             type=raw,value=latest,enable={{is_default_branch}}
@@ -208,7 +215,8 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=ref,event=tag
-            type=ref,event=branch
+            # 不再打分支名 tag（原先的 main）：它只在手动 dispatch 分支时产生，内容会永远落后于
+            # 最新版本号 tag，用户容易误拉旧镜像。最新版本一律用 latest / 0.1.x / v0.1.x 表达。
             type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
 
@@ -313,3 +321,44 @@ jobs:
             exit 1
           fi
           echo "Hub 概述已更新（来源 docker/hub-overview.md，$(wc -c < docker/hub-overview.md) 字节）"
+
+      # 删 Hub 上的过时 tag（比如不再生产的 main）：走同一个账号级 JWT，删 tag 需要账号权限，
+      # registry 令牌不行。用 workflow_dispatch 的 delete_tags 输入触发，可与 only_description 同用。
+      - name: 删除 Docker Hub 上的过时 tag
+        if: ${{ github.event.inputs.delete_tags != '' }}
+        env:
+          DELETE_TAGS: ${{ github.event.inputs.delete_tags }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DOCKERHUB_USERNAME:-}" ]; then
+            echo "::notice::未配置 DOCKERHUB_USERNAME，跳过删除 tag"
+            exit 0
+          fi
+
+          code="$(curl -sS -o /tmp/hub-login.json -w '%{http_code}' -X POST \
+            -H 'Content-Type: application/json' \
+            --data "$(python3 -c 'import json,os;print(json.dumps({"username":os.environ["DOCKERHUB_USERNAME"],"password":os.environ["DOCKERHUB_TOKEN"]}))')" \
+            "https://hub.docker.com/v2/users/login/")"
+          if [ "$code" != 200 ]; then
+            echo "Hub 登录失败：HTTP $code" >&2
+            exit 1
+          fi
+          jwt="$(python3 -c 'import json;print(json.load(open("/tmp/hub-login.json",encoding="utf-8")).get("token",""))')"
+          if [ -z "$jwt" ]; then
+            echo "Hub 登录返回 200 但没有 token 字段，接口形态变了" >&2
+            exit 1
+          fi
+
+          IFS=',' read -ra tags <<< "$DELETE_TAGS"
+          for t in "${tags[@]}"; do
+            t="$(printf '%s' "$t" | tr -d '[:space:]')"
+            [ -n "$t" ] || continue
+            code="$(curl -sS -o /tmp/hub-del.json -w '%{http_code}' -X DELETE \
+              -H "Authorization: Bearer $jwt" \
+              "https://hub.docker.com/v2/repositories/${HUB_IMAGE}/tags/$t")"
+            case "$code" in
+              200|202|204) echo "已删除 tag $t" ;;
+              404) echo "tag $t 本来就不存在，跳过" ;;
+              *) echo "删除 tag $t 失败：HTTP $code" >&2; cat /tmp/hub-del.json >&2; exit 1 ;;
+            esac
+          done
