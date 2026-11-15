@@ -94,6 +94,9 @@ backup_brand() {
 cleanup() {
   restore_tsconfig
   restore_brand
+  if [ -d "$APP_DIR/.deps-new" ]; then
+    rm -rf "$APP_DIR/.deps-new"
+  fi
 }
 
 trap 'log "部署中断，当前提交 $(git rev-parse --short HEAD 2>/dev/null || echo unknown)"' ERR
@@ -211,20 +214,60 @@ if [ -z "$CONTAINER_NAME" ]; then
   command -v npm >/dev/null 2>&1 || fail "未找到 npm"
 fi
 
+deps_fingerprint() {
+  local out=""
+  if [ -f "$APP_DIR/scripts/deps-hash.js" ]; then
+    if [ -n "$CONTAINER_NAME" ]; then
+      out=$(docker exec -w "$CONTAINER_WORKDIR" "$CONTAINER_NAME" node scripts/deps-hash.js package-lock.json 2>/dev/null || true)
+    else
+      out=$(node scripts/deps-hash.js package-lock.json 2>/dev/null || true)
+    fi
+  fi
+  out=$(printf '%s' "$out" | tr -d '\r\n')
+  if [ -n "$out" ]; then
+    printf '%s' "$out"
+  else
+    sha256sum "$APP_DIR/package-lock.json" | awk '{print $1}'
+  fi
+}
+
 install_deps() {
-  local lock_hash stamp="$APP_DIR/.deps-lock"
-  lock_hash=$(sha256sum "$APP_DIR/package-lock.json" | awk '{print $1}')
-  if [ -d "$APP_DIR/node_modules" ] && [ "$(cat "$stamp" 2>/dev/null || true)" = "$lock_hash" ]; then
+  local stamp="$APP_DIR/.deps-lock"
+  local stage="$APP_DIR/.deps-new"
+  local old="$APP_DIR/.node_modules.old"
+  local fp
+
+  fp=$(deps_fingerprint)
+
+  if [ -d "$APP_DIR/node_modules" ] && [ -x "$APP_DIR/node_modules/.bin/next" ] &&
+     [ "$(cat "$stamp" 2>/dev/null || true)" = "$fp" ]; then
     log "依赖未变化，跳过 npm ci"
+    rm -rf "$old"
     return 0
   fi
+
   log "安装依赖"
+  rm -rf "$stage" "$old"
+  mkdir -p "$stage"
+  chmod 0777 "$stage"
+  cp "$APP_DIR/package.json" "$APP_DIR/package-lock.json" "$stage/"
+
   if [ -n "$CONTAINER_NAME" ]; then
-    docker exec -w "$CONTAINER_WORKDIR" "$CONTAINER_NAME" npm ci --include=dev --no-audit --no-fund
+    docker exec -w "$CONTAINER_WORKDIR/.deps-new" "$CONTAINER_NAME" npm ci --include=dev --no-audit --no-fund
   else
-    npm ci --include=dev --no-audit --no-fund
+    ( cd "$stage" && npm ci --include=dev --no-audit --no-fund )
   fi
-  printf '%s\n' "$lock_hash" > "$stamp"
+
+  [ -x "$stage/node_modules/.bin/next" ] ||
+    fail "依赖安装不完整（缺少 node_modules/.bin/next），线上 node_modules 未改动"
+
+  if [ -d "$APP_DIR/node_modules" ]; then
+    mv "$APP_DIR/node_modules" "$old"
+  fi
+  mv "$stage/node_modules" "$APP_DIR/node_modules"
+  rm -rf "$stage"
+  printf '%s\n' "$fp" > "$stamp"
+  log "依赖已原子替换"
 }
 
 install_deps
@@ -341,6 +384,7 @@ restart_app
 if ! command -v curl >/dev/null 2>&1; then
   log "未安装 curl，跳过健康检查"
   git rev-parse HEAD > "$APP_DIR/.deploy-ok"
+  rm -rf "$APP_DIR/.node_modules.old"
   log "部署完成: $(git log --oneline -1)"
   exit 0
 fi
@@ -349,10 +393,11 @@ log "健康检查 $HEALTH_URL"
 for _ in $(seq 1 60); do
   if curl -fsS --max-time 5 "$HEALTH_URL" >/dev/null 2>&1; then
     git rev-parse HEAD > "$APP_DIR/.deploy-ok"
+    rm -rf "$APP_DIR/.node_modules.old"
     log "部署完成: $(git log --oneline -1)"
     exit 0
   fi
   sleep 2
 done
 
-fail "健康检查未通过；旧构建保留在 $APP_DIR/.next.prev，排查后可手动恢复"
+fail "健康检查未通过；旧构建保留在 $APP_DIR/.next.prev、旧依赖保留在 $APP_DIR/.node_modules.old，排查后可手动恢复"
