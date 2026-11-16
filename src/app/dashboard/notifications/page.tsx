@@ -1,10 +1,12 @@
+import { redirect } from "next/navigation";
 import { getCurrentUser, listNotifications } from "@/lib/auth";
 import NotificationList from "@/components/notification-list";
 
 export const dynamic = "force-dynamic";
 
 export default async function NotificationsPage() {
-  const user = (await getCurrentUser())!;
+  const user = await getCurrentUser();
+  if (!user) redirect("/login");
   const notices = await listNotifications(user.id, 100);
 
   return <NotificationList notices={notices} />;

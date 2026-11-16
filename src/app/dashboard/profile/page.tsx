@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { getSiteConfig } from "@/lib/site-config";
 import {
@@ -25,7 +26,8 @@ export default async function ProfilePage({
 }: {
   searchParams: Promise<{ social?: string; provider?: string; social_error?: string }>;
 }) {
-  const user = (await getCurrentUser())!;
+  const user = await getCurrentUser();
+  if (!user) redirect("/login");
   const sp = await searchParams;
 
   const [identities, cfg, github, gitee, google] = await Promise.all([

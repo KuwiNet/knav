@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { listSubmissions } from "@/lib/submissions";
 import { withdrawSubmissionAction } from "@/lib/actions/submission-actions";
@@ -19,7 +20,8 @@ export default async function SubmissionsPage({
 }: {
   searchParams: Promise<{ page?: string; status?: string }>;
 }) {
-  const user = (await getCurrentUser())!;
+  const user = await getCurrentUser();
+  if (!user) redirect("/login");
   const sp = await searchParams;
   const page = Math.max(1, Number(sp.page) || 1);
   const status = (sp.status ?? "") as "" | "pending" | "approved" | "rejected";

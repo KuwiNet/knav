@@ -17,6 +17,10 @@ const nextConfig: NextConfig = {
     serverActions: {
       // 「数据迁移」要能上传整份 MySQL 备份文件，8MB 装不下来自站点的导出
       bodySizeLimit: "64mb",
+      // 经 EdgeOne 回源时 x-forwarded-host 是加速域名 cdn.kuwi.net，而浏览器发来的 origin 是 kuwi.net，
+      // 两者不一致时 Next 的 Server Action CSRF 校验会直接拒绝（Invalid Server Actions request / E80），
+      // 表现为后台保存主题等表单提交 500。放行自有域名后该校验会跳过这一步。
+      allowedOrigins: ["kuwi.net", "*.kuwi.net"],
     },
   },
   async rewrites() {

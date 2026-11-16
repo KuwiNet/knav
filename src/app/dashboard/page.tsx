@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import {
   getCurrentUser,
   listNotifications,
@@ -11,7 +12,8 @@ import { countSubmissionsByStatus } from "@/lib/submissions";
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
-  const user = (await getCurrentUser())!;
+  const user = await getCurrentUser();
+  if (!user) redirect("/login");
   const [stats, notices, unread, noticesTotal, favorites] = await Promise.all([
     countSubmissionsByStatus(user.id),
     listNotifications(user.id, 5),
