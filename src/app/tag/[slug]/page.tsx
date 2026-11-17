@@ -45,7 +45,7 @@ export default async function TagPage({
 
       <div className="section" style={{ marginTop: 34 }}>
         <div className="section-head">
-          <h2 className="section-title">其它标签</h2>
+          <h2 className="section-title">其他标签</h2>
         </div>
         <div className="grid" style={{ gap: 10 }}>
           {tags

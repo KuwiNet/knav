@@ -196,7 +196,7 @@ export async function updateCategory(input: {
     [slug, input.id]
   );
   if (dup) {
-    if (manual) return { ok: false, error: "该别名已被其它分类占用" };
+    if (manual) return { ok: false, error: "该别名已被其他分类占用" };
     slug = await uniqueSlug(slug, input.id);
     if (!slug) return { ok: false, error: "别名重名过多，请手动填写一个" };
   }

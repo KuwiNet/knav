@@ -104,7 +104,7 @@ export const CODE_THEME_BY_MODE: Record<"dark" | "light", string> = {
 };
 
 /** 「关于本站」默认正文（Markdown） */
-export const DEFAULT_ABOUT_CONTENT = `knav 是一个为了方便上网更快捷的一键直达而建立的网址收藏网站，网站完全是非盈利性质，全部内容均来自网络和网友投稿。
+export const DEFAULT_ABOUT_CONTENT = `knav 是一个网址收藏网站，把常用站点收在一处，点开就能直达。网站完全是非营利性质，内容全部来自网络和网友投稿。
 
 ## 内容组织
 

@@ -736,7 +736,7 @@ export async function updateManagedUser(
       "SELECT id FROM knav_users WHERE email = ? AND id <> ? LIMIT 1",
       [email, id]
     );
-    if (dup) return { ok: false, error: "该邮箱已被其它账号使用" };
+    if (dup) return { ok: false, error: "该邮箱已被其他账号使用" };
     const current = await queryOne<{ email: string }>(
       "SELECT email FROM knav_users WHERE id = ? LIMIT 1",
       [id]

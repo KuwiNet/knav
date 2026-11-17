@@ -89,5 +89,5 @@ export async function unbindSocialAction(
 
   revalidatePath("/dashboard/profile");
   revalidatePath("/", "layout");
-  return { success: "已解绑，可以用其它方式继续登录。" };
+  return { success: "已解绑，可以用其他方式继续登录。" };
 }

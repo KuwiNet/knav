@@ -384,7 +384,7 @@ function ContentForm({
                       <a
                         href={`/admin/downloads?contentId=${detail?.id ?? 0}`}
                         className="badge badge-accent nowrap"
-                        title="该平台还有其它镜像链接，点开下载管理查看"
+                        title="该平台还有其他镜像链接，点开下载管理查看"
                       >
                         共 {v.mirrorCount} 个镜像
                       </a>
@@ -650,7 +650,7 @@ export default function ContentManager({
       {categoryId ? (
         <div className="hint">
           已按分类筛选（选顶级分类会一并列出其下所有子分类的内容）。
-          上移 / 下移只在该分类内部生效，不影响其它分类的顺序。
+          上移 / 下移只在该分类内部生效，不影响其他分类的顺序。
         </div>
       ) : null}
 
